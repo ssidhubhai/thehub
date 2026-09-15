@@ -1,7 +1,6 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import { getFirestore, Firestore } from 'firebase/firestore';
 import { getAuth, Auth } from 'firebase/auth';
-import appletConfig from '../../../firebase-applet-config.json';
 
 export interface FirebaseConfig {
   apiKey?: string;
@@ -14,13 +13,13 @@ export interface FirebaseConfig {
 }
 
 export const firebaseConfig: FirebaseConfig = {
-  apiKey: appletConfig.apiKey || (typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_FIREBASE_API_KEY : undefined),
-  authDomain: appletConfig.authDomain || (typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_FIREBASE_AUTH_DOMAIN : undefined),
-  projectId: appletConfig.projectId || (typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_FIREBASE_PROJECT_ID : undefined),
-  storageBucket: appletConfig.storageBucket || (typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_FIREBASE_STORAGE_BUCKET : undefined),
-  messagingSenderId: appletConfig.messagingSenderId || (typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID : undefined),
-  appId: appletConfig.appId || (typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_FIREBASE_APP_ID : undefined),
-  firestoreDatabaseId: appletConfig.firestoreDatabaseId,
+  apiKey: (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_FIREBASE_API_KEY) || "AIzaSyDFuBTcMS0YZcDMLyJqcToalE4wQq_MFYY",
+  authDomain: (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_FIREBASE_AUTH_DOMAIN) || "nimble-symbol-0ghtt.firebaseapp.com",
+  projectId: (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_FIREBASE_PROJECT_ID) || "nimble-symbol-0ghtt",
+  storageBucket: (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_FIREBASE_STORAGE_BUCKET) || "nimble-symbol-0ghtt.firebasestorage.app",
+  messagingSenderId: (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID) || "438740322547",
+  appId: (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_FIREBASE_APP_ID) || "1:438740322547:web:e9e315f43df52fc040cf86",
+  firestoreDatabaseId: (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID) || "ai-studio-thehub-ee155c96-79c1-4a87-9b9f-e5f913535489",
 };
 
 export const isFirebaseConfigured = Boolean(

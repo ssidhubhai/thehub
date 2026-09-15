@@ -1,4 +1,13 @@
 import { eventBus } from './eventBus';
+import { db } from '../config';
+import {
+  collection,
+  doc,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  getDocs,
+} from 'firebase/firestore';
 import {
   SEED_USERS,
   SEED_POSTS,
@@ -154,6 +163,15 @@ export class MockDatabase {
       items.push({ ...data, id });
     }
     this.setItems(collectionKey, items);
+
+    if (db) {
+      try {
+        const docRef = doc(db, collectionKey, id);
+        await setDoc(docRef, data, { merge: true });
+      } catch (err) {
+        console.warn(`[Firestore sync set] ${collectionKey}/${id}:`, err);
+      }
+    }
   }
 
   async create<T extends Record<string, any> = Record<string, any>>(
@@ -167,6 +185,16 @@ export class MockDatabase {
     const newItem = { ...data, id };
     items.unshift(newItem);
     this.setItems(collectionKey, items);
+
+    if (db) {
+      try {
+        const docRef = doc(db, collectionKey, id);
+        await setDoc(docRef, newItem);
+      } catch (err) {
+        console.warn(`[Firestore sync create] ${collectionKey}/${id}:`, err);
+      }
+    }
+
     return newItem as T & { id: string };
   }
 
@@ -177,12 +205,30 @@ export class MockDatabase {
       items[index] = { ...items[index], ...partial };
       this.setItems(collectionKey, items);
     }
+
+    if (db) {
+      try {
+        const docRef = doc(db, collectionKey, id);
+        await updateDoc(docRef, partial as Record<string, any>);
+      } catch (err) {
+        console.warn(`[Firestore sync update] ${collectionKey}/${id}:`, err);
+      }
+    }
   }
 
   async delete(collectionKey: string, id: string): Promise<void> {
     const items = this.getItems<{ id: string }>(collectionKey);
     const filtered = items.filter((item) => item.id !== id);
     this.setItems(collectionKey, filtered);
+
+    if (db) {
+      try {
+        const docRef = doc(db, collectionKey, id);
+        await deleteDoc(docRef);
+      } catch (err) {
+        console.warn(`[Firestore sync delete] ${collectionKey}/${id}:`, err);
+      }
+    }
   }
 
   subscribe(collectionKey: string, callback: () => void): () => void {

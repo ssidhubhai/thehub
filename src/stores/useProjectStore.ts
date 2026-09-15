@@ -30,6 +30,18 @@ export interface ProjectState {
     links?: ProjectExternalLink[];
     coverImageUrl?: string;
   }) => Promise<Project>;
+  updateProject: (
+    projectId: string,
+    data: {
+      name?: string;
+      tagline?: string;
+      description?: string;
+      lookingForTags?: string[];
+      links?: ProjectExternalLink[];
+      coverImageUrl?: string;
+    }
+  ) => Promise<Project>;
+  deleteProject: (projectId: string) => Promise<void>;
   expressInterest: (projectId: string, message?: string) => Promise<ProjectInterest>;
   addProjectUpdate: (
     projectId: string,
@@ -196,6 +208,61 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
       return created;
     }
+  },
+
+  updateProject: async (projectId: string, data) => {
+    const user = useAuthStore.getState().user;
+    if (!user) throw new Error('Must be signed in to edit a project');
+
+    try {
+      const updated = await api.projects.update(projectId, data);
+      set((state) => ({
+        projects: state.projects.map((p) => (p.id === projectId ? updated : p)),
+      }));
+      return updated;
+    } catch {
+      const project = await mockDb.get<Project>(STORAGE_KEYS.PROJECTS, projectId);
+      if (!project) throw new Error('Project not found');
+      if (project.ownerId !== user.id && user.role !== 'moderator' && user.username !== 'sidhu001') {
+        throw new Error('Unauthorized to edit this project');
+      }
+
+      const now = new Date().toISOString();
+      const updatedData: Partial<Project> = {
+        ...data,
+        updatedAt: now,
+      };
+
+      await mockDb.update<Project>(STORAGE_KEYS.PROJECTS, projectId, updatedData);
+      const updatedProject = { ...project, ...updatedData };
+
+      set((state) => ({
+        projects: state.projects.map((p) => (p.id === projectId ? updatedProject : p)),
+      }));
+
+      return updatedProject;
+    }
+  },
+
+  deleteProject: async (projectId: string) => {
+    const user = useAuthStore.getState().user;
+    if (!user) throw new Error('Must be signed in to delete a project');
+
+    const project = get().projects.find((p) => p.id === projectId) || (await mockDb.get<Project>(STORAGE_KEYS.PROJECTS, projectId));
+    if (project && project.ownerId !== user.id && user.role !== 'moderator' && user.username !== 'sidhu001') {
+      throw new Error('Unauthorized to delete this project');
+    }
+
+    try {
+      await api.projects.delete(projectId);
+    } catch {
+      // ignore
+    }
+
+    await mockDb.delete(STORAGE_KEYS.PROJECTS, projectId);
+    set((state) => ({
+      projects: state.projects.filter((p) => p.id !== projectId),
+    }));
   },
 
   expressInterest: async (projectId: string, message?: string) => {

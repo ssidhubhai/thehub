@@ -223,12 +223,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }));
 
       return created;
-    } catch (apiErr: any) {
-      if (apiErr.message && !apiErr.message.includes('Failed to fetch')) {
-        set({ isSending: false });
-        throw apiErr;
-      }
-
+    } catch {
       const now = new Date().toISOString();
       const newMessageData: Omit<Message, 'id'> = {
         conversationId,
@@ -371,11 +366,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         activeTab: 'groups',
       }));
       return conv;
-    } catch (apiErr: any) {
-      if (apiErr.message && !apiErr.message.includes('Failed to fetch')) {
-        throw apiErr;
-      }
-
+    } catch {
       const allParticipants = Array.from(new Set([user.id, ...participantIds]));
       const now = new Date().toISOString();
 

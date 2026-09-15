@@ -244,6 +244,11 @@ export const api = {
         body: JSON.stringify(partial),
       });
     },
+    delete: async (id: string) => {
+      return request<{ success: boolean }>(`/api/projects/${id}`, {
+        method: 'DELETE',
+      });
+    },
     addUpdate: async (
       projectId: string,
       dataOrTitle: { title: string; content: string; imageUrl?: string } | string,

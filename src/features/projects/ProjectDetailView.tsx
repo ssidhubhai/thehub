@@ -16,6 +16,7 @@ import {
   EmptyState,
 } from '@/components/primitives';
 import { ProjectInterestModal } from './ProjectInterestModal';
+import { EditProjectModal } from './EditProjectModal';
 import {
   ArrowLeft,
   ExternalLink,
@@ -28,6 +29,8 @@ import {
   MessageSquare,
   History,
   CheckCircle2,
+  Edit3,
+  Trash2,
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { toast } from '@/components/primitives/Toast';
@@ -57,10 +60,13 @@ export function ProjectDetailView({
     fetchProjectDetails,
     addProjectUpdate,
     addDiscussion,
+    deleteProject,
   } = useProjectStore();
   const { conversations, createGroupChat } = useChatStore();
 
   const [isInterestModalOpen, setIsInterestModalOpen] = React.useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = React.useState(false);
+  const [isDeleting, setIsDeleting] = React.useState(false);
 
   // New Update form state (owner only)
   const [isAddingUpdate, setIsAddingUpdate] = React.useState(false);
@@ -243,6 +249,40 @@ export function ProjectDetailView({
                 >
                   Team Chat
                 </Button>
+              )}
+
+              {(isOwner || user?.role === 'moderator' || user?.username === 'sidhu001') && (
+                <>
+                  <Button
+                    variant="outline"
+                    size="md"
+                    onClick={() => setIsEditModalOpen(true)}
+                    iconPrefix={<Edit3 className="h-4 w-4" />}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="md"
+                    disabled={isDeleting}
+                    onClick={async () => {
+                      if (window.confirm(`Are you sure you want to delete the project "${project.name}"? This action cannot be undone.`)) {
+                        try {
+                          setIsDeleting(true);
+                          await deleteProject(project.id);
+                          toast.flame('Project Deleted', 'The project has been removed.');
+                          onBack?.();
+                        } catch {
+                          toast.error('Failed to delete project');
+                          setIsDeleting(false);
+                        }
+                      }
+                    }}
+                    iconPrefix={<Trash2 className="h-4 w-4" />}
+                  >
+                    {isDeleting ? 'Deleting...' : 'Delete'}
+                  </Button>
+                </>
               )}
             </div>
           </div>
@@ -540,6 +580,13 @@ export function ProjectDetailView({
         project={project}
         open={isInterestModalOpen}
         onOpenChange={setIsInterestModalOpen}
+      />
+
+      {/* Edit Project Modal */}
+      <EditProjectModal
+        project={project}
+        open={isEditModalOpen}
+        onOpenChange={setIsEditModalOpen}
       />
     </div>
   );
