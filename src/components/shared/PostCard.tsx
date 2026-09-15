@@ -14,6 +14,8 @@ import {
   Pin,
   PinOff,
   ShieldCheck,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -55,6 +57,7 @@ export function PostCard({
   } = useFeedStore();
 
   const [isRepliesExpanded, setIsRepliesExpanded] = React.useState(defaultExpandedReplies);
+  const [isContentExpanded, setIsContentExpanded] = React.useState(false);
   const [replyText, setReplyText] = React.useState('');
   const [isSubmittingReply, setIsSubmittingReply] = React.useState(false);
 
@@ -375,8 +378,38 @@ export function PostCard({
           </div>
         </div>
       ) : (
-        <div className="text-sm text-foreground/90 leading-relaxed font-sans whitespace-pre-wrap break-words">
-          {renderFormattedContent(post.content)}
+        <div className="space-y-1.5">
+          {post.content.length > 280 || (post.content.match(/\n/g) || []).length > 4 ? (
+            <div>
+              <div
+                className={cn(
+                  'text-sm text-foreground/90 leading-relaxed font-sans whitespace-pre-wrap break-words transition-all duration-300 relative',
+                  !isContentExpanded && 'max-h-32 overflow-hidden'
+                )}
+              >
+                {renderFormattedContent(post.content)}
+                {!isContentExpanded && (
+                  <div className="absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-card via-card/80 to-transparent pointer-events-none" />
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsContentExpanded(!isContentExpanded)}
+                className="mt-1.5 inline-flex items-center gap-1 text-xs font-semibold text-flame-600 dark:text-flame-400 hover:text-flame-700 dark:hover:text-flame-300 transition-colors focus:outline-none focus-visible:underline"
+              >
+                <span>{isContentExpanded ? 'Show less' : 'Read more...'}</span>
+                {isContentExpanded ? (
+                  <ChevronUp className="h-3.5 w-3.5" />
+                ) : (
+                  <ChevronDown className="h-3.5 w-3.5" />
+                )}
+              </button>
+            </div>
+          ) : (
+            <div className="text-sm text-foreground/90 leading-relaxed font-sans whitespace-pre-wrap break-words">
+              {renderFormattedContent(post.content)}
+            </div>
+          )}
         </div>
       )}
 

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { useFeedStore } from '@/stores/useFeedStore';
 import { Avatar, Button, Textarea, ConfirmModal } from '@/components/primitives';
-import { Image, Link2, X, Flame, Pin } from 'lucide-react';
+import { Image, Link2, X, Flame, Pin, Maximize2, Minimize2 } from 'lucide-react';
 import { PostAttachment } from '@/types/post';
 import { toast } from '@/components/primitives/Toast';
 import { cn } from '@/lib/utils';
@@ -24,6 +24,7 @@ export function PostComposer({ onPostCreated, className }: PostComposerProps) {
     user?.username === 'sidhu001';
 
   const [isExpanded, setIsExpanded] = React.useState(false);
+  const [isStretched, setIsStretched] = React.useState(false);
   const [content, setContent] = React.useState('');
   const [isPinned, setIsPinned] = React.useState(false);
   const [attachmentType, setAttachmentType] = React.useState<'none' | 'image' | 'link'>('none');
@@ -33,6 +34,16 @@ export function PostComposer({ onPostCreated, className }: PostComposerProps) {
   const [isDiscardModalOpen, setIsDiscardModalOpen] = React.useState(false);
 
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+
+  // Auto-resize textarea as user types
+  React.useEffect(() => {
+    if (textareaRef.current && isExpanded) {
+      textareaRef.current.style.height = 'auto';
+      const scrollHeight = textareaRef.current.scrollHeight;
+      const minHeight = isStretched ? 240 : 100;
+      textareaRef.current.style.height = `${Math.max(scrollHeight, minHeight)}px`;
+    }
+  }, [content, isExpanded, isStretched]);
 
   if (!user) return null;
 
@@ -151,15 +162,33 @@ export function PostComposer({ onPostCreated, className }: PostComposerProps) {
               className="mt-1"
             />
             <div className="flex-1 space-y-2">
-              <Textarea
-                ref={textareaRef}
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Share a breakthrough, question, discovery, or project update..."
-                rows={3}
-                className="w-full text-sm font-sans border-none p-0 focus-visible:ring-0 shadow-none resize-none bg-transparent"
-              />
+              <div className="relative">
+                <Textarea
+                  ref={textareaRef}
+                  value={content}
+                  onChange={(e) => setContent(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Share a breakthrough, question, discovery, or project update..."
+                  rows={isStretched ? 8 : 3}
+                  className={cn(
+                    'w-full text-sm font-sans border border-border/40 focus:border-border/80 rounded-xl p-3 pr-9 focus-visible:ring-1 focus-visible:ring-flame-500/50 shadow-none transition-all bg-background/50 leading-relaxed',
+                    isStretched ? 'min-h-[220px]' : 'min-h-[90px]'
+                  )}
+                />
+                <button
+                  type="button"
+                  onClick={() => setIsStretched(!isStretched)}
+                  className="absolute right-2 top-2 p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+                  title={isStretched ? 'Standard view' : 'Stretch editor for long post'}
+                  aria-label={isStretched ? 'Standard view' : 'Stretch editor for long post'}
+                >
+                  {isStretched ? (
+                    <Minimize2 className="h-3.5 w-3.5" />
+                  ) : (
+                    <Maximize2 className="h-3.5 w-3.5" />
+                  )}
+                </button>
+              </div>
 
               {/* Attachment Preview / Inputs (F32) */}
               {attachmentType === 'image' && (
