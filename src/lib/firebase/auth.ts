@@ -57,11 +57,13 @@ class UnifiedAuthService implements AuthService {
       this.persistSession(user);
       return user;
     } catch (apiErr: any) {
-      // If server error indicates user already exists or validation, throw it directly
-      if (apiErr.message && !apiErr.message.includes('Failed to fetch')) {
+      // If server returned a meaningful user validation message (like username taken), throw it
+      const msg = apiErr?.message || '';
+      if (msg.includes('already taken') || msg.includes('Username must be') || msg.includes('Username can only')) {
         throw apiErr;
       }
-      // Fallback to local mock if server is unreachable
+      // On static hosting (Vercel static without custom backend), /api routes return 405/404.
+      // Gracefully fall back to the live client data store.
       const existingUsers = await mockDb.list<User>(STORAGE_KEYS.USERS);
       const existing = existingUsers.find((u) => u.username.toLowerCase() === cleanUsername);
       if (existing) {
@@ -104,18 +106,20 @@ class UnifiedAuthService implements AuthService {
       this.persistSession(user);
       return user;
     } catch (apiErr: any) {
-      if (apiErr.message && !apiErr.message.includes('Failed to fetch')) {
+      const msg = apiErr?.message || '';
+      // Only rethrow explicit credential errors when from backend
+      if (msg.includes('Invalid password') || msg.includes('User not found with this username')) {
         throw apiErr;
       }
       const existingUsers = await mockDb.list<User>(STORAGE_KEYS.USERS);
       const user = existingUsers.find((u) => u.username.toLowerCase() === cleanUsername);
 
       if (!user) {
-        throw new Error('User not found with this username');
+        throw new Error('User not found with this username. Please click "Create an account" to register.');
       }
 
       if (password && user.passwordHash && user.passwordHash !== `mock_hash_${password}`) {
-        throw new Error('Invalid password');
+        throw new Error('Invalid password. Please check your credentials.');
       }
 
       user.presence = {
@@ -162,10 +166,7 @@ class UnifiedAuthService implements AuthService {
       const res = await api.auth.updateProfile(partialProfile);
       this.persistSession(res.user);
       return res.user;
-    } catch (apiErr: any) {
-      if (apiErr.message && !apiErr.message.includes('Failed to fetch')) {
-        throw apiErr;
-      }
+    } catch {
       const user = await mockDb.get<User>(STORAGE_KEYS.USERS, userId);
       if (!user) {
         throw new Error('User not found');

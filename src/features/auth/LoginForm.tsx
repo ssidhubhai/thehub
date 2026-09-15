@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Input } from '@/components/primitives/Input';
 import { Button } from '@/components/primitives/Button';
 import { useAuthStore } from '@/stores/useAuthStore';
-import { User as UserIcon, Lock, AlertCircle, ArrowRight, Sparkles } from 'lucide-react';
+import { User as UserIcon, Lock, AlertCircle, ArrowRight } from 'lucide-react';
 import { User } from '@/types/user';
 
 export interface LoginFormProps {
@@ -36,12 +36,6 @@ export const LoginForm: React.FC<LoginFormProps> = ({
     } catch (err: any) {
       setFormError(err?.message || 'Failed to sign in');
     }
-  };
-
-  const handleDemoFill = (demoUsername: string) => {
-    setUsername(demoUsername);
-    setPassword('password123');
-    setFormError(null);
   };
 
   const displayError = formError || storeError;
@@ -107,37 +101,6 @@ export const LoginForm: React.FC<LoginFormProps> = ({
           Sign In
         </Button>
       </form>
-
-      {/* Demo shortcuts for convenience during development & testing */}
-      <div className="pt-3 border-t border-border/60 text-left space-y-2">
-        <div className="flex items-center gap-1.5 text-[11px] font-mono text-muted-foreground uppercase">
-          <Sparkles className="h-3 w-3 text-flame-500" />
-          <span>Quick Demo Accounts</span>
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          <button
-            type="button"
-            onClick={() => handleDemoFill('maya_lin')}
-            className="rounded border border-border px-2 py-0.5 font-mono text-[11px] text-muted-foreground hover:border-foreground hover:text-foreground transition-colors"
-          >
-            @maya_lin
-          </button>
-          <button
-            type="button"
-            onClick={() => handleDemoFill('alex_river')}
-            className="rounded border border-border px-2 py-0.5 font-mono text-[11px] text-muted-foreground hover:border-foreground hover:text-foreground transition-colors"
-          >
-            @alex_river
-          </button>
-          <button
-            type="button"
-            onClick={() => handleDemoFill('elena_rostova')}
-            className="rounded border border-border px-2 py-0.5 font-mono text-[11px] text-muted-foreground hover:border-foreground hover:text-foreground transition-colors"
-          >
-            @elena_rostova
-          </button>
-        </div>
-      </div>
 
       {onSwitchToRegister && (
         <div className="pt-2 text-center text-xs text-muted-foreground">
