@@ -1,0 +1,46 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow read/write for community hub collections
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+    match /posts/{postId} {
+      allow read, write: if true;
+    }
+    match /comments/{commentId} {
+      allow read, write: if true;
+    }
+    match /reactions/{reactionId} {
+      allow read, write: if true;
+    }
+    match /projects/{projectId} {
+      allow read, write: if true;
+    }
+    match /project_updates/{updateId} {
+      allow read, write: if true;
+    }
+    match /project_discussions/{discussionId} {
+      allow read, write: if true;
+    }
+    match /project_interests/{interestId} {
+      allow read, write: if true;
+    }
+    match /conversations/{conversationId} {
+      allow read, write: if true;
+    }
+    match /messages/{messageId} {
+      allow read, write: if true;
+    }
+    match /notifications/{notificationId} {
+      allow read, write: if true;
+    }
+    match /connections/{connectionId} {
+      allow read, write: if true;
+    }
+
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

@@ -1,0 +1,167 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Bricolage Grotesque", system-ui, sans-serif;
+  --font-sans: "Geist", "Plus Jakarta Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+
+  --color-flame-50: #fff7ed;
+  --color-flame-100: #ffedd5;
+  --color-flame-200: #fed7aa;
+  --color-flame-300: #fdba74;
+  --color-flame-400: #fb923c;
+  --color-flame-500: #f97316;
+  --color-flame-600: #ea580c;
+  --color-flame-700: #c2410c;
+
+  --shadow-subtle: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-float: 0 8px 30px rgba(0, 0, 0, 0.08);
+  --shadow-glow-flame: 0 0 15px rgba(249, 115, 22, 0.25);
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+}
+
+@layer base {
+  :root {
+    /* Near-monochrome warm palette with warm paper background */
+    --background: 60 4.8% 97%; /* #FAFAF9 warm paper */
+    --foreground: 20 14.3% 4.1%; /* #0C0A09 warm black */
+
+    --card: 0 0% 100%;
+    --card-foreground: 20 14.3% 4.1%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 20 14.3% 4.1%;
+
+    --primary: 20 14.3% 4.1%; /* warm deep black */
+    --primary-foreground: 60 9.1% 97.8%;
+
+    --secondary: 60 4.8% 94%; /* warm neutral stone */
+    --secondary-foreground: 24 9.8% 10%;
+
+    --muted: 60 4.8% 94%;
+    --muted-foreground: 25 5.3% 44.7%;
+
+    --accent: 60 4.8% 90%;
+    --accent-foreground: 24 9.8% 10%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 60 9.1% 97.8%;
+
+    --border: 20 5.9% 90%;
+    --input: 20 5.9% 90%;
+    --ring: 20 14.3% 4.1%;
+
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 20 14.3% 4.1%; /* #0C0A09 deep rich black */
+    --foreground: 60 9.1% 97.8%; /* #FAFAF9 warm off-white */
+
+    --card: 24 9.8% 7%; /* #141211 elevated card */
+    --card-foreground: 60 9.1% 97.8%;
+
+    --popover: 24 9.8% 7%;
+    --popover-foreground: 60 9.1% 97.8%;
+
+    --primary: 60 9.1% 97.8%;
+    --primary-foreground: 24 9.8% 10%;
+
+    --secondary: 12 6.5% 15.1%;
+    --secondary-foreground: 60 9.1% 97.8%;
+
+    --muted: 12 6.5% 15.1%;
+    --muted-foreground: 24 5.4% 63.9%;
+
+    --accent: 12 6.5% 18%;
+    --accent-foreground: 60 9.1% 97.8%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 60 9.1% 97.8%;
+
+    --border: 12 6.5% 15.1%;
+    --input: 12 6.5% 15.1%;
+    --ring: 24 5.7% 82.9%;
+  }
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: Geist, 'Plus Jakarta Sans', system-ui, sans-serif;
+  color: hsl(var(--foreground));
+  background-color: hsl(var(--background));
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Bold typography hierarchy across the entire app */
+h1, h2, h3, h4, h5, h6 {
+  font-family: "Bricolage Grotesque", system-ui, sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  color: hsl(var(--foreground));
+}
+
+h1 {
+  font-weight: 800;
+  letter-spacing: -0.035em;
+}
+
+h2 {
+  font-weight: 750;
+  letter-spacing: -0.03em;
+}
+
+strong, b, [data-bold] {
+  font-weight: 700;
+}
+
+/* Custom subtle scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.25);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.4);
+}

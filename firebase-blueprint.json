@@ -1,0 +1,104 @@
+{
+  "entities": {
+    "User": {
+      "collection": "users",
+      "fields": {
+        "id": { "type": "string" },
+        "username": { "type": "string" },
+        "profile": { "type": "map" },
+        "presence": { "type": "map" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "Post": {
+      "collection": "posts",
+      "fields": {
+        "id": { "type": "string" },
+        "authorId": { "type": "string" },
+        "author": { "type": "map" },
+        "content": { "type": "string" },
+        "attachment": { "type": "map" },
+        "commentCount": { "type": "number" },
+        "reactionCounts": { "type": "map" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "Comment": {
+      "collection": "comments",
+      "fields": {
+        "id": { "type": "string" },
+        "postId": { "type": "string" },
+        "authorId": { "type": "string" },
+        "author": { "type": "map" },
+        "content": { "type": "string" },
+        "createdAt": { "type": "string" }
+      }
+    },
+    "Project": {
+      "collection": "projects",
+      "fields": {
+        "id": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "name": { "type": "string" },
+        "tagline": { "type": "string" },
+        "description": { "type": "string" },
+        "lookingForTags": { "type": "array" },
+        "team": { "type": "array" },
+        "links": { "type": "array" },
+        "coverImageUrl": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "Conversation": {
+      "collection": "conversations",
+      "fields": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "title": { "type": "string" },
+        "participantIds": { "type": "array" },
+        "unreadCounts": { "type": "map" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "Message": {
+      "collection": "messages",
+      "fields": {
+        "id": { "type": "string" },
+        "conversationId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "sender": { "type": "map" },
+        "content": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "Notification": {
+      "collection": "notifications",
+      "fields": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "type": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      }
+    },
+    "Connection": {
+      "collection": "connections",
+      "fields": {
+        "id": { "type": "string" },
+        "requesterId": { "type": "string" },
+        "targetId": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    }
+  }
+}
