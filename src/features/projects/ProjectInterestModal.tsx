@@ -42,8 +42,8 @@ export function ProjectInterestModal({
       );
       setPitch('');
       onOpenChange(false);
-    } catch {
-      toast.error('Failed to send interest note');
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to send interest note');
     } finally {
       setIsSubmitting(false);
     }
