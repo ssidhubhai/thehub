@@ -1,5 +1,14 @@
 import { UserPresence } from './common';
 
+export type UserModerationStatus = 'active' | 'muted' | 'paused' | 'banned';
+
+export interface UserModerationInfo {
+  status: UserModerationStatus; // 'active' | 'muted' (cannot message/chat) | 'paused' (read-only) | 'banned' (blocked completely)
+  reason?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
 export interface UserProfile {
   displayName: string;
   bio: string;
@@ -20,6 +29,8 @@ export interface User {
   passwordHash?: string; // used internally in mock authentication
   role?: 'member' | 'moderator' | 'admin';
   isVerified?: boolean;
+  moderationStatus?: UserModerationStatus;
+  moderationReason?: string;
   profile: UserProfile;
   presence: UserPresence;
   createdAt: string; // ISO-8601

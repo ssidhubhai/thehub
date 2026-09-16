@@ -35,6 +35,9 @@ import {
   UserCheck,
   Eye,
   EyeOff,
+  Pin,
+  PinOff,
+  ShieldAlert,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from '@/components/primitives/Toast';
@@ -60,6 +63,7 @@ export function ChatRoom({
     sendMessage,
     editMessage,
     deleteMessage,
+    pinMessage,
     isSending,
     toggleBlockUser,
     toggleMuteConversation,
@@ -82,6 +86,9 @@ export function ChatRoom({
   const [deletingMessage, setDeletingMessage] = React.useState<Message | null>(null);
   const [isDeleting, setIsDeleting] = React.useState(false);
 
+  // Highlight message when clicked from pinned banner
+  const [highlightedMessageId, setHighlightedMessageId] = React.useState<string | null>(null);
+
   // Un-hide temporarily specific blocked messages
   const [revealedBlockedMessageIds, setRevealedBlockedMessageIds] = React.useState<string[]>([]);
 
@@ -91,6 +98,21 @@ export function ChatRoom({
   const convMessages = messages[conversation.id] || [];
 
   const isMuted = isConversationMuted(conversation.id);
+
+  const isModerator =
+    user?.role === 'moderator' ||
+    user?.role === 'admin' ||
+    user?.profile?.role === 'moderator' ||
+    user?.username === 'sidhu001';
+
+  // Find currently pinned message
+  const pinnedMessage = React.useMemo(() => {
+    if (conversation.pinnedMessageId) {
+      const found = convMessages.find((m) => m.id === conversation.pinnedMessageId);
+      if (found) return found;
+    }
+    return convMessages.find((m) => m.isPinned) || null;
+  }, [conversation.pinnedMessageId, convMessages]);
 
   const handleImageFile = (file: File) => {
     if (!file.type.startsWith('image/')) {
@@ -238,6 +260,30 @@ export function ChatRoom({
     }
   };
 
+  const handleTogglePin = async (msgId: string) => {
+    const isCurrentlyPinned = conversation.pinnedMessageId === msgId || pinnedMessage?.id === msgId;
+    const targetId = isCurrentlyPinned ? null : msgId;
+    try {
+      await pinMessage(conversation.id, targetId);
+      if (targetId) {
+        toast.flame('Message Pinned', 'Pinned to the top of this conversation.');
+      } else {
+        toast.flame('Message Unpinned', 'Removed from conversation header.');
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to update pinned message');
+    }
+  };
+
+  const scrollToMessage = (msgId: string) => {
+    const el = document.getElementById(`chat-msg-${msgId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setHighlightedMessageId(msgId);
+      setTimeout(() => setHighlightedMessageId(null), 2500);
+    }
+  };
+
   const handleToggleBlock = (targetId: string, displayName: string) => {
     toggleBlockUser(targetId);
     const nowBlocked = !isUserBlocked(targetId);
@@ -277,17 +323,50 @@ export function ChatRoom({
     );
   };
 
+  // Helper to resolve sender profile info with fallback to people list or auth user
+  const resolveSenderInfo = (senderId: string, rawSender?: Message['sender']) => {
+    if (user && user.id === senderId) {
+      return {
+        id: user.id,
+        displayName: user.profile?.displayName || 'You',
+        username: user.username || 'you',
+        avatarUrl: user.profile?.avatarUrl,
+        avatarInitials: user.profile?.displayName?.slice(0, 2).toUpperCase() || 'ME',
+        role: user.role || user.profile?.role,
+        isVerified: user.isVerified || user.profile?.isVerified || user.username === 'sidhu001',
+      };
+    }
+    const matchedPerson = people.find((p) => p.id === senderId);
+    return {
+      id: senderId,
+      displayName: matchedPerson?.profile?.displayName || rawSender?.displayName || 'Builder',
+      username: matchedPerson?.username || rawSender?.username || 'builder',
+      avatarUrl: matchedPerson?.profile?.avatarUrl || rawSender?.avatarUrl,
+      avatarInitials:
+        matchedPerson?.profile?.displayName?.slice(0, 2).toUpperCase() ||
+        rawSender?.avatarInitials ||
+        '??',
+      role: matchedPerson?.role || matchedPerson?.profile?.role,
+      isVerified:
+        matchedPerson?.isVerified ||
+        matchedPerson?.profile?.isVerified ||
+        matchedPerson?.username === 'sidhu001' ||
+        rawSender?.username === 'sidhu001',
+    };
+  };
+
   // Group messages by sender if sent within 5 minutes
   const groupedMessages = React.useMemo(() => {
     const groups: {
       senderId: string;
-      sender: Message['sender'];
+      sender: ReturnType<typeof resolveSenderInfo>;
       messages: Message[];
       isBlocked: boolean;
     }[] = [];
 
     convMessages.forEach((msg) => {
       const msgBlocked = isUserBlocked(msg.senderId);
+      const senderInfo = resolveSenderInfo(msg.senderId, msg.sender);
       const lastGroup = groups[groups.length - 1];
       const isSameSender = lastGroup && lastGroup.senderId === msg.senderId;
 
@@ -306,14 +385,14 @@ export function ChatRoom({
 
       groups.push({
         senderId: msg.senderId,
-        sender: msg.sender,
+        sender: senderInfo,
         messages: [msg],
         isBlocked: msgBlocked,
       });
     });
 
     return groups;
-  }, [convMessages, isUserBlocked]);
+  }, [convMessages, isUserBlocked, people, user]);
 
   const conversationTitle = conversation.type === 'direct'
     ? otherUser?.profile.displayName || 'Direct Chat'
@@ -416,6 +495,16 @@ export function ChatRoom({
                 )}
               </DropdownMenuItem>
 
+              {pinnedMessage && (
+                <DropdownMenuItem
+                  onClick={() => scrollToMessage(pinnedMessage.id)}
+                  className="gap-2 text-xs"
+                >
+                  <Pin className="h-3.5 w-3.5 text-flame-500" />
+                  <span>Jump to Pinned Message</span>
+                </DropdownMenuItem>
+              )}
+
               {conversation.type === 'direct' && otherUser && (
                 <>
                   <DropdownMenuSeparator />
@@ -445,6 +534,40 @@ export function ChatRoom({
         </div>
       </div>
 
+      {/* Pinned Message Announcement Banner */}
+      {pinnedMessage && (
+        <div className="px-3.5 sm:px-5 py-2 bg-flame-500/10 border-b border-flame-500/20 flex items-center justify-between gap-3 text-xs shrink-0 transition-colors hover:bg-flame-500/15">
+          <button
+            type="button"
+            onClick={() => scrollToMessage(pinnedMessage.id)}
+            className="flex items-center gap-2 text-left min-w-0 flex-1 focus-visible:outline-none"
+          >
+            <div className="h-5 w-5 rounded-md bg-flame-500/20 text-flame-500 flex items-center justify-center shrink-0">
+              <Pin className="h-3 w-3" />
+            </div>
+            <div className="min-w-0 truncate">
+              <span className="font-display font-semibold text-foreground mr-1.5">
+                Pinned by {pinnedMessage.sender.displayName || 'Moderator'}:
+              </span>
+              <span className="text-muted-foreground truncate font-sans">
+                {pinnedMessage.content || '[Image Attachment]'}
+              </span>
+            </div>
+          </button>
+
+          {(isModerator || pinnedMessage.senderId === user?.id) && (
+            <button
+              type="button"
+              onClick={() => handleTogglePin(pinnedMessage.id)}
+              className="font-mono text-[10px] text-muted-foreground hover:text-flame-500 hover:underline shrink-0 p-1"
+              title="Unpin message"
+            >
+              <PinOff className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Message Stream */}
       <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-5 space-y-4 overscroll-contain">
         {groupedMessages.length === 0 ? (
@@ -469,44 +592,59 @@ export function ChatRoom({
                 key={gIdx}
                 className={cn('flex items-end gap-2.5 group/group', isOwn ? 'flex-row-reverse' : 'flex-row')}
               >
-                {/* Avatar for others */}
-                {!isOwn && (
+                {/* Avatar */}
+                <button
+                  type="button"
+                  onClick={() => onNavigateToUser?.(group.sender.id)}
+                  className={cn(
+                    'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-flame-500 rounded-full mb-1 shrink-0 hover:scale-105 transition-transform',
+                    isOwn && 'hidden sm:block'
+                  )}
+                  title={`View profile of ${group.sender.displayName}`}
+                >
                   <Avatar
                     src={group.sender.avatarUrl}
                     name={group.sender.displayName}
-                    size="xs"
-                    className="mb-1 shrink-0"
+                    size="sm"
+                    className="shrink-0 shadow-sm"
                   />
-                )}
+                </button>
 
                 {/* Bubble Cluster */}
                 <div className={cn('flex flex-col space-y-1.5 max-w-[85%] sm:max-w-[75%]', isOwn ? 'items-end' : 'items-start')}>
-                  {/* Sender Name for first message in group if not own */}
-                  {!isOwn && (
-                    <div className="flex items-center gap-1.5 px-1 mb-0.5">
-                      <span className="font-display font-semibold text-[11px] text-muted-foreground">
-                        {group.sender.displayName}
+                  {/* Clean & Minimal Sender Header - Show ONLY Display Name, Clickable to Profile */}
+                  <div
+                    className={cn(
+                      'flex items-center gap-1.5 px-1 mb-0.5',
+                      isOwn ? 'flex-row-reverse justify-end' : 'flex-row justify-start'
+                    )}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => onNavigateToUser?.(group.sender.id)}
+                      className="font-display font-semibold text-xs text-foreground hover:underline hover:text-flame-500 transition-colors"
+                    >
+                      {isOwn ? 'You' : group.sender.displayName}
+                    </button>
+                    {isSenderBlocked && (
+                      <span className="font-mono text-[9px] text-destructive bg-destructive/10 px-1.5 py-0.2 rounded">
+                        Blocked
                       </span>
-                      {group.sender.username === 'sidhu001' && (
-                        <VerifiedBadge role="moderator" isVerified size="sm" />
-                      )}
-                      {isSenderBlocked && (
-                        <span className="font-mono text-[9px] text-destructive bg-destructive/10 px-1.5 py-0.2 rounded">
-                          Blocked
-                        </span>
-                      )}
-                    </div>
-                  )}
+                    )}
+                  </div>
 
                   {group.messages.map((msg) => {
                     const isEditing = editingMessageId === msg.id;
                     const isRevealed = revealedBlockedMessageIds.includes(msg.id);
                     const isEdited = msg.updatedAt && new Date(msg.updatedAt).getTime() - new Date(msg.createdAt).getTime() > 1000;
+                    const isThisPinned = conversation.pinnedMessageId === msg.id || msg.isPinned;
+                    const isHighlighted = highlightedMessageId === msg.id;
 
                     if (isSenderBlocked && !isRevealed && !isOwn) {
                       return (
                         <div
                           key={msg.id}
+                          id={`chat-msg-${msg.id}`}
                           className="px-3.5 py-2 text-xs rounded-xl bg-muted/30 border border-border/50 text-muted-foreground flex items-center justify-between gap-3"
                         >
                           <div className="flex items-center gap-2">
@@ -528,14 +666,32 @@ export function ChatRoom({
                     return (
                       <div
                         key={msg.id}
+                        id={`chat-msg-${msg.id}`}
                         className={cn(
-                          'relative group/msg px-4 py-2 text-xs sm:text-sm leading-relaxed rounded-2xl break-words transition-all',
+                          'relative group/msg px-4 py-2.5 text-xs sm:text-sm leading-relaxed rounded-2xl break-words transition-all shadow-subtle',
                           isOwn
                             ? 'bg-foreground text-background rounded-br-sm'
                             : 'bg-muted/40 text-foreground border border-border/70 rounded-bl-sm',
+                          isThisPinned && 'ring-1.5 ring-flame-500 bg-flame-500/5',
+                          isHighlighted && 'ring-2 ring-flame-500 scale-[1.02] duration-300 animate-pulse',
                           isEditing && 'ring-2 ring-flame-500'
                         )}
                       >
+                        {/* Pinned Tag if message is pinned */}
+                        {isThisPinned && (
+                          <div
+                            className={cn(
+                              'flex items-center gap-1 pb-1 mb-1 border-b text-[10px] font-mono font-semibold',
+                              isOwn
+                                ? 'border-background/20 text-flame-300'
+                                : 'border-border/60 text-flame-500'
+                            )}
+                          >
+                            <Pin className="h-3 w-3 fill-current" />
+                            <span>Pinned Message</span>
+                          </div>
+                        )}
+
                         {msg.imageUrl && (
                           <div className="mb-2 max-h-64 overflow-hidden rounded-xl border border-border/30">
                             <img
@@ -610,6 +766,21 @@ export function ChatRoom({
                                   )}
                                 </button>
 
+                                {/* Pin / Unpin message button */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleTogglePin(msg.id)}
+                                  className="hover:scale-110 transition-transform p-0.5 hover:text-flame-500"
+                                  title={isThisPinned ? 'Unpin message' : 'Pin message'}
+                                  aria-label={isThisPinned ? 'Unpin message' : 'Pin message'}
+                                >
+                                  {isThisPinned ? (
+                                    <PinOff className="h-3 w-3 text-flame-500" />
+                                  ) : (
+                                    <Pin className="h-3 w-3" />
+                                  )}
+                                </button>
+
                                 {/* Edit button for own messages */}
                                 {isOwn && (
                                   <button
@@ -624,7 +795,7 @@ export function ChatRoom({
                                 )}
 
                                 {/* Delete button for own messages or moderator */}
-                                {(isOwn || user?.role === 'moderator') && (
+                                {(isOwn || isModerator) && (
                                   <button
                                     type="button"
                                     onClick={() => setDeletingMessage(msg)}
@@ -640,10 +811,10 @@ export function ChatRoom({
                                 {!isOwn && !isSenderBlocked && (
                                   <button
                                     type="button"
-                                    onClick={() => handleToggleBlock(msg.senderId, msg.sender.displayName)}
+                                    onClick={() => handleToggleBlock(msg.senderId, group.sender.displayName)}
                                     className="hover:scale-110 transition-transform p-0.5 hover:text-destructive"
-                                    title={`Avoid messages from ${msg.sender.displayName}`}
-                                    aria-label={`Avoid messages from ${msg.sender.displayName}`}
+                                    title={`Avoid messages from ${group.sender.displayName}`}
+                                    aria-label={`Avoid messages from ${group.sender.displayName}`}
                                   >
                                     <UserX className="h-3 w-3" />
                                   </button>
@@ -665,7 +836,28 @@ export function ChatRoom({
 
       {/* Gated Direct Messaging Prompt OR Fixed Composer */}
       <div className="p-3 sm:p-4 border-t border-border/70 bg-card shrink-0">
-        {isDirectChatGated ? (
+        {user?.moderationStatus && user.moderationStatus !== 'active' ? (
+          <div className="p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 flex items-center gap-3 text-left">
+            <div className="h-8 w-8 rounded-lg bg-amber-500/20 text-amber-500 flex items-center justify-center shrink-0">
+              <ShieldAlert className="h-4.5 w-4.5" />
+            </div>
+            <div className="space-y-0.5 min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="font-display font-bold text-xs text-foreground">
+                  Messaging Restricted by Admin
+                </span>
+                <Badge variant="warning" size="sm" className="font-mono text-[9px] uppercase">
+                  {user.moderationStatus}
+                </Badge>
+              </div>
+              <p className="font-sans text-xs text-muted-foreground">
+                {user.moderationReason
+                  ? `Note: ${user.moderationReason}`
+                  : 'Your account messaging privileges are restricted by Admin.'}
+              </p>
+            </div>
+          </div>
+        ) : isDirectChatGated ? (
           <div className="p-4 rounded-xl border border-flame-500/30 bg-flame-500/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-left">
             <div className="space-y-0.5">
               <div className="flex items-center gap-1.5 text-xs font-bold text-foreground">

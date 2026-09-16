@@ -8,6 +8,10 @@ import {
   deleteDoc,
   getDocs,
 } from 'firebase/firestore';
+import { Connection } from '@/types/common';
+import { Project, ProjectInterest } from '@/types/project';
+import { User } from '@/types/user';
+import { InAppNotification } from '@/types/notification';
 import {
   SEED_USERS,
   SEED_POSTS,
@@ -233,6 +237,262 @@ export class MockDatabase {
 
   subscribe(collectionKey: string, callback: () => void): () => void {
     return eventBus.subscribe(`collection:${collectionKey}`, callback);
+  }
+
+  // ============================================================
+  // DATABASE SERVICE LAYER MOCK HANDLERS FOR ACTIONS
+  // ============================================================
+
+  /**
+   * Mock POST handler for connection requests
+   */
+  async connect(senderId: string, recipientId: string): Promise<Connection> {
+    this.ensureInitialized();
+    if (!senderId || !recipientId) {
+      throw new Error('Sender and recipient are required');
+    }
+    if (senderId === recipientId) {
+      throw new Error('Cannot connect to yourself');
+    }
+
+    const allConns = this.getItems<Connection>(STORAGE_KEYS.CONNECTIONS);
+    const existing = allConns.find(
+      (c) =>
+        (c.senderId === senderId && c.recipientId === recipientId) ||
+        (c.senderId === recipientId && c.recipientId === senderId)
+    );
+
+    if (existing) {
+      if (existing.status === 'accepted') {
+        throw new Error('You are already connected with this user');
+      }
+      throw new Error('A connection request is already pending between you two');
+    }
+
+    const now = new Date().toISOString();
+    const newConn: Connection = {
+      id: `conn_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      senderId,
+      recipientId,
+      status: 'pending',
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await this.create<Connection>(STORAGE_KEYS.CONNECTIONS, newConn);
+
+    // Notify recipient
+    const users = this.getItems<User>(STORAGE_KEYS.USERS);
+    const sender = users.find((u) => u.id === senderId);
+    if (sender) {
+      const notif: InAppNotification = {
+        id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        recipientId,
+        type: 'connection_request',
+        payload: {
+          actorId: sender.id,
+          actorName: sender.profile?.displayName || sender.username,
+          actorAvatarUrl: sender.profile?.avatarUrl,
+          actorAvatarInitials: sender.profile?.avatarInitials,
+          targetId: newConn.id,
+          targetTitle: 'Connection Request',
+          messageSnippet: `${sender.profile?.displayName || sender.username} wants to connect with you.`,
+          deepLinkUrl: `/people?profile=${sender.username}`,
+        },
+        isRead: false,
+        createdAt: now,
+      };
+      await this.create<InAppNotification>(STORAGE_KEYS.NOTIFICATIONS, notif);
+    }
+
+    return newConn;
+  }
+
+  /**
+   * Mock POST/PATCH handler for accepting connections
+   */
+  async acceptConnection(connectionId: string, recipientId?: string): Promise<Connection> {
+    this.ensureInitialized();
+    const conn = await this.get<Connection>(STORAGE_KEYS.CONNECTIONS, connectionId);
+    if (!conn) {
+      throw new Error('Connection request not found');
+    }
+    if (recipientId && conn.recipientId !== recipientId) {
+      throw new Error('Only the recipient can accept this connection');
+    }
+
+    const now = new Date().toISOString();
+    await this.update<Connection>(STORAGE_KEYS.CONNECTIONS, connectionId, {
+      status: 'accepted',
+      updatedAt: now,
+    });
+
+    const updatedConn: Connection = { ...conn, status: 'accepted', updatedAt: now };
+
+    // Notify sender
+    const users = this.getItems<User>(STORAGE_KEYS.USERS);
+    const recipient = users.find((u) => u.id === conn.recipientId);
+    if (recipient) {
+      const notif: InAppNotification = {
+        id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        recipientId: conn.senderId,
+        type: 'connection_accepted',
+        payload: {
+          actorId: recipient.id,
+          actorName: recipient.profile?.displayName || recipient.username,
+          actorAvatarUrl: recipient.profile?.avatarUrl,
+          actorAvatarInitials: recipient.profile?.avatarInitials,
+          targetId: conn.id,
+          targetTitle: 'Connection Accepted',
+          messageSnippet: `${recipient.profile?.displayName || recipient.username} accepted your connection request!`,
+          deepLinkUrl: `/people?profile=${recipient.username}`,
+        },
+        isRead: false,
+        createdAt: now,
+      };
+      await this.create<InAppNotification>(STORAGE_KEYS.NOTIFICATIONS, notif);
+    }
+
+    return updatedConn;
+  }
+
+  /**
+   * Mock POST/PATCH handler for declining connections
+   */
+  async declineConnection(connectionId: string, recipientId?: string): Promise<void> {
+    this.ensureInitialized();
+    const conn = await this.get<Connection>(STORAGE_KEYS.CONNECTIONS, connectionId);
+    if (conn && recipientId && conn.recipientId !== recipientId) {
+      throw new Error('Only the recipient can decline this connection');
+    }
+    await this.delete(STORAGE_KEYS.CONNECTIONS, connectionId);
+  }
+
+  /**
+   * Mock POST handler for pitching / expressing interest in a project
+   */
+  async pitchProject(projectId: string, userId: string, message?: string): Promise<ProjectInterest> {
+    this.ensureInitialized();
+    const project = await this.get<Project>(STORAGE_KEYS.PROJECTS, projectId);
+    if (!project) {
+      throw new Error('Project not found');
+    }
+
+    if (project.ownerId === userId) {
+      throw new Error('You are the owner of this project');
+    }
+
+    const users = this.getItems<User>(STORAGE_KEYS.USERS);
+    const user = users.find((u) => u.id === userId);
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    const allInterests = this.getItems<ProjectInterest>(STORAGE_KEYS.PROJECT_INTEREST);
+    const existing = allInterests.find(
+      (i) => i.projectId === projectId && i.userId === userId
+    );
+    if (existing) {
+      throw new Error('You have already expressed interest or pitched for this project');
+    }
+
+    const now = new Date().toISOString();
+    const newInterest: ProjectInterest = {
+      id: `int_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      projectId,
+      userId: user.id,
+      applicant: {
+        id: user.id,
+        username: user.username,
+        displayName: user.profile?.displayName || user.username,
+        avatarUrl: user.profile?.avatarUrl,
+        avatarInitials: user.profile?.avatarInitials,
+      },
+      message: (message || '').trim(),
+      status: 'submitted',
+      createdAt: now,
+    };
+
+    await this.create<ProjectInterest>(STORAGE_KEYS.PROJECT_INTEREST, newInterest);
+
+    // Update project count
+    const newCount = (project.interestCount || 0) + 1;
+    await this.update<Project>(STORAGE_KEYS.PROJECTS, projectId, {
+      interestCount: newCount,
+    });
+
+    // Notify project owner
+    const notif: InAppNotification = {
+      id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      recipientId: project.ownerId,
+      type: 'project_interest',
+      payload: {
+        actorId: user.id,
+        actorName: user.profile?.displayName || user.username,
+        actorAvatarUrl: user.profile?.avatarUrl,
+        actorAvatarInitials: user.profile?.avatarInitials,
+        targetId: projectId,
+        targetTitle: project.name,
+        messageSnippet: message?.trim() ? `"${message.slice(0, 60)}..."` : `${user.profile?.displayName || user.username} pitched interest in your project.`,
+        deepLinkUrl: `/projects/${projectId}?tab=roster`,
+      },
+      isRead: false,
+      createdAt: now,
+    };
+    await this.create<InAppNotification>(STORAGE_KEYS.NOTIFICATIONS, notif);
+
+    return newInterest;
+  }
+
+  /**
+   * Alias for pitchProject
+   */
+  async expressInterest(projectId: string, userId: string, message?: string): Promise<ProjectInterest> {
+    return this.pitchProject(projectId, userId, message);
+  }
+
+  /**
+   * Generic Mock POST handler dispatcher
+   */
+  async handlePost(endpoint: string, body: any, currentUser?: User | null): Promise<any> {
+    this.ensureInitialized();
+    const cleanEndpoint = endpoint.split('?')[0].replace(/^\/api\//, '');
+
+    // Connect handler
+    if (cleanEndpoint === 'connections' || cleanEndpoint === 'connections/request' || cleanEndpoint === 'connect') {
+      if (!currentUser) throw new Error('Must be signed in');
+      const recipientId = body.recipientId || body.targetUserId || body.userId;
+      return this.connect(currentUser.id, recipientId);
+    }
+
+    // Connect accept handler
+    const acceptMatch = cleanEndpoint.match(/^connections\/([^/]+)\/accept$/);
+    if (acceptMatch) {
+      if (!currentUser) throw new Error('Must be signed in');
+      return this.acceptConnection(acceptMatch[1], currentUser.id);
+    }
+
+    // Connect decline handler
+    const declineMatch = cleanEndpoint.match(/^connections\/([^/]+)\/decline$/);
+    if (declineMatch) {
+      if (!currentUser) throw new Error('Must be signed in');
+      return this.declineConnection(declineMatch[1], currentUser.id);
+    }
+
+    // Pitch / Express Interest handler
+    const pitchMatch = cleanEndpoint.match(/^projects\/([^/]+)\/(interest|pitch|pitches|interests)$/);
+    if (pitchMatch) {
+      if (!currentUser) throw new Error('Must be signed in');
+      return this.pitchProject(pitchMatch[1], currentUser.id, body?.message);
+    }
+
+    if (cleanEndpoint === 'projects/interest' || cleanEndpoint === 'projects/pitch' || cleanEndpoint === 'pitch') {
+      if (!currentUser) throw new Error('Must be signed in');
+      const projectId = body.projectId || body.id;
+      return this.pitchProject(projectId, currentUser.id, body?.message);
+    }
+
+    throw new Error(`Unhandled mock POST endpoint: ${endpoint}`);
   }
 }
 

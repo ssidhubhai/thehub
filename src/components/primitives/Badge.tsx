@@ -2,7 +2,7 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { X } from 'lucide-react';
 
-export type BadgeVariant = 'default' | 'secondary' | 'outline' | 'accent' | 'flame' | 'success';
+export type BadgeVariant = 'default' | 'secondary' | 'outline' | 'accent' | 'flame' | 'success' | 'warning' | 'destructive';
 
 export interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
   variant?: BadgeVariant;
@@ -33,6 +33,8 @@ export const Badge = React.forwardRef<HTMLSpanElement, BadgeProps>(
       accent: 'bg-accent text-accent-foreground border-border/80',
       flame: 'bg-flame-50 text-flame-600 border-flame-200 dark:bg-flame-950/40 dark:text-flame-400 dark:border-flame-800',
       success: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-800',
+      warning: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800',
+      destructive: 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-400 dark:border-rose-800',
     };
 
     const sizeStyles = {

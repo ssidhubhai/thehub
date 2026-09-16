@@ -349,6 +349,20 @@ class DatabaseManager {
     if (partial.passwordHash) {
       user.passwordHash = partial.passwordHash;
     }
+    if (partial.role !== undefined) {
+      user.role = partial.role;
+      if (user.profile) user.profile.role = partial.role;
+    }
+    if (partial.isVerified !== undefined) {
+      user.isVerified = partial.isVerified;
+      if (user.profile) user.profile.isVerified = partial.isVerified;
+    }
+    if (partial.moderationStatus !== undefined) {
+      user.moderationStatus = partial.moderationStatus;
+    }
+    if (partial.moderationReason !== undefined) {
+      user.moderationReason = partial.moderationReason;
+    }
     user.updatedAt = new Date().toISOString();
 
     this.persist();
@@ -728,6 +742,9 @@ class DatabaseManager {
     
     const conv = this.getConversation(convId);
     if (conv) {
+      if (conv.pinnedMessageId === messageId) {
+        conv.pinnedMessageId = null;
+      }
       const remaining = this.listMessages(convId);
       if (remaining.length > 0) {
         const last = remaining[remaining.length - 1];
@@ -744,6 +761,20 @@ class DatabaseManager {
     }
     this.persist();
     return true;
+  }
+
+  public pinMessageToConversation(conversationId: string, messageId: string | null): Conversation | undefined {
+    const conv = this.getConversation(conversationId);
+    if (!conv) return undefined;
+    conv.pinnedMessageId = messageId;
+    conv.updatedAt = new Date().toISOString();
+    this.data.messages.forEach((m) => {
+      if (m.conversationId === conv.id) {
+        m.isPinned = Boolean(messageId && m.id === messageId);
+      }
+    });
+    this.persist();
+    return conv;
   }
 
   public markConversationRead(conversationId: string, userId: string): void {

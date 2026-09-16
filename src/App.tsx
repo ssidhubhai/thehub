@@ -5,6 +5,7 @@ import { usePeopleStore } from '@/stores/usePeopleStore';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useChatStore } from '@/stores/useChatStore';
 import { useNotificationStore } from '@/stores/useNotificationStore';
+import { useRealtimeSync } from '@/hooks/useRealtimeSync';
 import { mockDb } from '@/lib/firebase';
 import { Flame } from 'lucide-react';
 import { ToastContainer, toast, Button } from '@/components/primitives';
@@ -39,6 +40,9 @@ export function App() {
 
   const [activeTheme, setActiveTheme] = React.useState<'light' | 'dark'>('light');
   const [previewLanding, setPreviewLanding] = React.useState(false);
+
+  // Enable automatic real-time sync across platforms/devices
+  useRealtimeSync(3000);
 
   // Initialize data on mount
   React.useEffect(() => {

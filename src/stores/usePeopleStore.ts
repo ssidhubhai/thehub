@@ -13,8 +13,8 @@ export interface PeopleState {
   selectedInterests: string[];
   isLoading: boolean;
 
-  fetchPeople: () => Promise<void>;
-  fetchConnections: () => Promise<void>;
+  fetchPeople: (options?: { silent?: boolean }) => Promise<void>;
+  fetchConnections: (options?: { silent?: boolean }) => Promise<void>;
   setSearchQuery: (query: string) => void;
   toggleInterest: (tag: string) => void;
   clearFilters: () => void;
@@ -27,6 +27,11 @@ export interface PeopleState {
     targetUserId: string
   ) => 'none' | 'pending_sent' | 'pending_received' | 'accepted';
   canMessage: (targetUserId: string) => boolean;
+  updateUserModeration: (
+    userId: string,
+    moderationStatus: 'active' | 'muted' | 'paused' | 'banned',
+    moderationReason?: string
+  ) => Promise<User>;
   reset: () => void;
 }
 
@@ -37,34 +42,22 @@ export const usePeopleStore = create<PeopleState>((set, get) => ({
   selectedInterests: [],
   isLoading: false,
 
-  fetchPeople: async () => {
-    set({ isLoading: true });
+  fetchPeople: async (options?: { silent?: boolean }) => {
+    if (!options?.silent) set({ isLoading: true });
     try {
       const serverUsers = await api.users.list();
       set({ people: serverUsers, isLoading: false });
     } catch {
-      try {
-        mockDb.ensureInitialized();
-        const allUsers = await mockDb.list<User>(STORAGE_KEYS.USERS);
-        set({ people: allUsers, isLoading: false });
-      } catch {
-        set({ isLoading: false });
-      }
+      set({ isLoading: false });
     }
   },
 
-  fetchConnections: async () => {
+  fetchConnections: async (options?: { silent?: boolean }) => {
     try {
       const serverConns = await api.connections.list();
       set({ connections: serverConns });
-    } catch {
-      try {
-        mockDb.ensureInitialized();
-        const allConns = await mockDb.list<Connection>(STORAGE_KEYS.CONNECTIONS);
-        set({ connections: allConns });
-      } catch (err) {
-        console.error('Error fetching connections:', err);
-      }
+    } catch (err) {
+      console.error('Error fetching connections:', err);
     }
   },
 
@@ -92,46 +85,17 @@ export const usePeopleStore = create<PeopleState>((set, get) => ({
     try {
       const created = await api.connections.request(targetUserId);
       set((state) => ({
-        connections: [...state.connections, created],
+        connections: [...state.connections.filter((c) => c.id !== created.id), created],
       }));
       return created;
     } catch (apiErr: any) {
-      if (apiErr.message && !apiErr.message.includes('Failed to fetch')) {
+      if (apiErr.message?.includes('already exists') || apiErr.message?.includes('Cannot connect')) {
         throw apiErr;
       }
-      const now = new Date().toISOString();
-      const newConnData: Omit<Connection, 'id'> = {
-        senderId: user.id,
-        recipientId: targetUserId,
-        status: 'pending',
-        createdAt: now,
-        updatedAt: now,
-      };
-
-      const created = await mockDb.create<Connection>(STORAGE_KEYS.CONNECTIONS, newConnData as any);
-
-      const notif: Omit<InAppNotification, 'id'> = {
-        recipientId: targetUserId,
-        type: 'connection_request',
-        payload: {
-          actorId: user.id,
-          actorName: user.profile.displayName,
-          actorAvatarUrl: user.profile.avatarUrl,
-          actorAvatarInitials: user.profile.avatarInitials,
-          targetId: created.id,
-          targetTitle: 'Connection Request',
-          messageSnippet: `${user.profile.displayName} wants to connect with you.`,
-          deepLinkUrl: `/people?profile=${user.username}`,
-        },
-        isRead: false,
-        createdAt: now,
-      };
-      await mockDb.create<InAppNotification>(STORAGE_KEYS.NOTIFICATIONS, notif as any);
-
+      const created = await mockDb.connect(user.id, targetUserId);
       set((state) => ({
-        connections: [...state.connections, created],
+        connections: [...state.connections.filter((c) => c.id !== created.id), created],
       }));
-
       return created;
     }
   },
@@ -149,42 +113,10 @@ export const usePeopleStore = create<PeopleState>((set, get) => ({
         ),
       }));
     } catch (apiErr: any) {
-      if (apiErr.message && !apiErr.message.includes('Failed to fetch')) {
-        throw apiErr;
-      }
-      const conn = await mockDb.get<Connection>(STORAGE_KEYS.CONNECTIONS, connectionId);
-      if (!conn) throw new Error('Connection not found');
-      if (conn.recipientId !== user.id) {
-        throw new Error('Only the recipient can accept a connection request');
-      }
-
-      const now = new Date().toISOString();
-      await mockDb.update<Connection>(STORAGE_KEYS.CONNECTIONS, connectionId, {
-        status: 'accepted',
-        updatedAt: now,
-      });
-
-      const notif: Omit<InAppNotification, 'id'> = {
-        recipientId: conn.senderId,
-        type: 'connection_accepted',
-        payload: {
-          actorId: user.id,
-          actorName: user.profile.displayName,
-          actorAvatarUrl: user.profile.avatarUrl,
-          actorAvatarInitials: user.profile.avatarInitials,
-          targetId: conn.id,
-          targetTitle: 'Connection Accepted',
-          messageSnippet: `${user.profile.displayName} accepted your connection request!`,
-          deepLinkUrl: `/people?profile=${user.username}`,
-        },
-        isRead: false,
-        createdAt: now,
-      };
-      await mockDb.create<InAppNotification>(STORAGE_KEYS.NOTIFICATIONS, notif as any);
-
+      const updated = await mockDb.acceptConnection(connectionId, user.id);
       set((state) => ({
         connections: state.connections.map((c) =>
-          c.id === connectionId ? { ...c, status: 'accepted', updatedAt: now } : c
+          c.id === connectionId ? updated : c
         ),
       }));
     }
@@ -237,6 +169,26 @@ export const usePeopleStore = create<PeopleState>((set, get) => ({
     if (isCurrentMod || isTargetMod) return true;
 
     return get().getConnectionStatus(targetUserId) === 'accepted';
+  },
+
+  updateUserModeration: async (
+    userId: string,
+    moderationStatus: 'active' | 'muted' | 'paused' | 'banned',
+    moderationReason?: string
+  ) => {
+    const res = await api.users.updateModeration(userId, moderationStatus, moderationReason);
+    if (res.user) {
+      set((state) => ({
+        people: state.people.map((p) => (p.id === res.user.id ? res.user : p)),
+      }));
+      // If updating current logged in user
+      const currentUser = useAuthStore.getState().user;
+      if (currentUser && currentUser.id === res.user.id) {
+        useAuthStore.setState({ user: res.user });
+      }
+      return res.user;
+    }
+    throw new Error('Failed to update user moderation status');
   },
 
   reset: () => {

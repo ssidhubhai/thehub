@@ -90,6 +90,19 @@ const requireAuth = (req: AuthenticatedRequest, res: Response, next: NextFunctio
   if (!req.user) {
     return res.status(401).json({ error: 'Authentication required. Please sign in.' });
   }
+
+  // Banned user check
+  if (req.user.moderationStatus === 'banned') {
+    const isLogout = req.path.includes('/auth/logout');
+    const isMe = req.path.includes('/auth/me');
+    if (!isLogout && !isMe) {
+      return res.status(403).json({
+        error: 'ACCOUNT_BANNED',
+        message: req.user.moderationReason || 'Your account has been banned by Admin.',
+      });
+    }
+  }
+
   next();
 };
 
@@ -128,6 +141,10 @@ async function startServer() {
         return res.status(400).json({ error: 'Username can only contain letters, numbers, and underscores' });
       }
 
+      if (!password || password.trim().length < 3) {
+        return res.status(400).json({ error: 'Password must be at least 3 characters long' });
+      }
+
       const existing = serverDb.findUserByUsername(cleanUsername);
       if (existing) {
         return res.status(409).json({ error: 'Username is already taken' });
@@ -138,7 +155,7 @@ async function startServer() {
       const newUser: User = {
         id: `user_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         username: cleanUsername,
-        passwordHash: hashPassword(password || 'password123'),
+        passwordHash: hashPassword(password),
         profile: {
           displayName: name,
           bio: '',
@@ -183,8 +200,12 @@ async function startServer() {
         return res.status(404).json({ error: 'User not found with this username' });
       }
 
-      // If user has passwordHash, verify it
-      if (password && user.passwordHash) {
+      // Strictly verify password
+      if (!password) {
+        return res.status(401).json({ error: 'Password is required' });
+      }
+
+      if (user.passwordHash) {
         const hashedInput = hashPassword(password);
         if (user.passwordHash !== hashedInput && user.passwordHash !== `mock_hash_${password}`) {
           return res.status(401).json({ error: 'Invalid password' });
@@ -288,6 +309,43 @@ async function startServer() {
     return res.json({ presence: updated?.presence });
   });
 
+  // Admin Moderation endpoint - STRICTLY FOR ADMIN (sidhu001 / moderator / admin)
+  app.patch('/api/users/:id/moderation', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const adminUser = req.user!;
+    const isAdmin =
+      adminUser.role === 'moderator' ||
+      adminUser.role === 'admin' ||
+      adminUser.profile?.role === 'moderator' ||
+      adminUser.username === 'sidhu001';
+
+    if (!isAdmin) {
+      return res.status(403).json({ error: 'Only Admin (sidhu001) can perform moderation actions' });
+    }
+
+    const { moderationStatus, moderationReason } = req.body;
+    const targetUser = serverDb.findUserById(req.params.id) || serverDb.findUserByUsername(req.params.id);
+
+    if (!targetUser) {
+      return res.status(404).json({ error: 'Target user not found' });
+    }
+
+    if (targetUser.username === 'sidhu001' && targetUser.id !== adminUser.id) {
+      return res.status(403).json({ error: 'Cannot modify primary Admin status' });
+    }
+
+    const updated = serverDb.updateUser(targetUser.id, {
+      moderationStatus: moderationStatus || 'active',
+      moderationReason: moderationReason || '',
+    });
+
+    if (!updated) {
+      return res.status(500).json({ error: 'Failed to update user moderation' });
+    }
+
+    const { passwordHash, ...safeUser } = updated;
+    return res.json({ user: safeUser, success: true });
+  });
+
   // ==========================================
   // HYBRID CONNECTION MODEL
   // ==========================================
@@ -297,8 +355,8 @@ async function startServer() {
     return res.json(connections);
   });
 
-  app.post('/api/connections', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-    const { recipientId } = req.body;
+  const handleConnectionRequest = (req: AuthenticatedRequest, res: Response) => {
+    const recipientId = req.body?.recipientId || req.body?.targetUserId || req.body?.userId || req.params?.id;
     const sender = req.user!;
 
     if (!recipientId || recipientId === sender.id) {
@@ -347,11 +405,19 @@ async function startServer() {
     });
 
     return res.status(201).json(created);
-  });
+  };
 
-  app.patch('/api/connections/:id/accept', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/connections', requireAuth, handleConnectionRequest);
+  app.post('/api/connections/request', requireAuth, handleConnectionRequest);
+  app.post('/api/connections/connect', requireAuth, handleConnectionRequest);
+  app.post('/api/connect', requireAuth, handleConnectionRequest);
+  app.post('/api/users/:id/connect', requireAuth, handleConnectionRequest);
+  app.post('/api/people/:id/connect', requireAuth, handleConnectionRequest);
+
+  const handleAcceptConnection = (req: AuthenticatedRequest, res: Response) => {
     const user = req.user!;
-    const connection = serverDb.getConnection(req.params.id);
+    const connectionId = req.params?.id || req.body?.connectionId || req.body?.id;
+    const connection = serverDb.getConnection(connectionId);
 
     if (!connection) {
       return res.status(404).json({ error: 'Connection not found' });
@@ -382,11 +448,16 @@ async function startServer() {
     });
 
     return res.json(updated);
-  });
+  };
 
-  app.patch('/api/connections/:id/decline', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  app.patch('/api/connections/:id/accept', requireAuth, handleAcceptConnection);
+  app.post('/api/connections/:id/accept', requireAuth, handleAcceptConnection);
+  app.post('/api/connections/accept', requireAuth, handleAcceptConnection);
+
+  const handleDeclineConnection = (req: AuthenticatedRequest, res: Response) => {
     const user = req.user!;
-    const connection = serverDb.getConnection(req.params.id);
+    const connectionId = req.params?.id || req.body?.connectionId || req.body?.id;
+    const connection = serverDb.getConnection(connectionId);
 
     if (!connection) {
       return res.status(404).json({ error: 'Connection not found' });
@@ -397,7 +468,11 @@ async function startServer() {
 
     const updated = serverDb.updateConnection(connection.id, 'declined');
     return res.json(updated);
-  });
+  };
+
+  app.patch('/api/connections/:id/decline', requireAuth, handleDeclineConnection);
+  app.post('/api/connections/:id/decline', requireAuth, handleDeclineConnection);
+  app.post('/api/connections/decline', requireAuth, handleDeclineConnection);
 
   // ==========================================
   // COMMON SPACE FEED & POSTS
@@ -413,6 +488,10 @@ async function startServer() {
   app.post('/api/posts', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     const { content, attachment, isPinned } = req.body;
     const user = req.user!;
+
+    if (user.moderationStatus === 'paused' || user.moderationStatus === 'banned') {
+      return res.status(403).json({ error: 'Your account is currently in Read-Only mode (paused) or banned by Admin.' });
+    }
 
     if (!content || !content.trim()) {
       return res.status(400).json({ error: 'Post content cannot be empty' });
@@ -442,7 +521,7 @@ async function startServer() {
       reactionCount: 0,
       commentCount: 0,
       isEdited: false,
-      isPinned: Boolean(isPinned && isMod),
+      isPinned: Boolean(isPinned),
       createdAt: now,
       updatedAt: now,
     };
@@ -470,8 +549,8 @@ async function startServer() {
     return res.json(updated);
   });
 
-  // Moderator toggle pin on post
-  app.patch('/api/posts/:id/pin', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  // Toggle pin on post (allowed for moderators or post author)
+  const handleTogglePinPost = (req: AuthenticatedRequest, res: Response) => {
     const user = req.user!;
     const post = serverDb.getPost(req.params.id);
     const isMod =
@@ -480,18 +559,21 @@ async function startServer() {
       user.profile?.role === 'moderator' ||
       user.username === 'sidhu001';
 
-    if (!isMod) {
-      return res.status(403).json({ error: 'Only moderators can pin or unpin posts' });
-    }
     if (!post) {
       return res.status(404).json({ error: 'Post not found' });
+    }
+    if (!isMod && post.authorId !== user.id) {
+      return res.status(403).json({ error: 'Only moderators or the author can pin or unpin this post' });
     }
 
     const updated = serverDb.updatePost(post.id, {
       isPinned: !post.isPinned,
     });
     return res.json(updated);
-  });
+  };
+
+  app.patch('/api/posts/:id/pin', requireAuth, handleTogglePinPost);
+  app.post('/api/posts/:id/pin', requireAuth, handleTogglePinPost);
 
   app.delete('/api/posts/:id', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     const user = req.user!;
@@ -560,6 +642,11 @@ async function startServer() {
   app.post('/api/posts/:id/comments', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     const { content } = req.body;
     const user = req.user!;
+
+    if (user.moderationStatus === 'muted' || user.moderationStatus === 'paused' || user.moderationStatus === 'banned') {
+      return res.status(403).json({ error: 'Your account is currently restricted from commenting by Admin.' });
+    }
+
     const post = serverDb.getPost(req.params.id);
 
     if (!post) {
@@ -794,11 +881,12 @@ async function startServer() {
     return res.status(201).json(created);
   });
 
-  // "I'm interested" CTA flow
-  app.post('/api/projects/:id/interest', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-    const { message } = req.body;
+  // "I'm interested" & "Pitch" CTA flows
+  const handleProjectInterest = (req: AuthenticatedRequest, res: Response) => {
+    const { message } = req.body || {};
     const user = req.user!;
-    const project = serverDb.getProject(req.params.id);
+    const projectId = req.params?.id || req.body?.projectId || req.body?.id;
+    const project = serverDb.getProject(projectId);
 
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
@@ -846,7 +934,26 @@ async function startServer() {
     });
 
     return res.status(201).json(created);
-  });
+  };
+
+  app.post('/api/projects/:id/interest', requireAuth, handleProjectInterest);
+  app.post('/api/projects/:id/pitch', requireAuth, handleProjectInterest);
+  app.post('/api/projects/:id/pitches', requireAuth, handleProjectInterest);
+  app.post('/api/projects/:id/interests', requireAuth, handleProjectInterest);
+  app.post('/api/projects/interest', requireAuth, handleProjectInterest);
+  app.post('/api/projects/pitch', requireAuth, handleProjectInterest);
+  app.post('/api/pitch', requireAuth, handleProjectInterest);
+
+  const handleUpdateInterestStatus = (req: AuthenticatedRequest, res: Response) => {
+    const { status } = req.body || {};
+    const interestId = req.params?.interestId || req.body?.interestId;
+    return res.json({ success: true, interestId, status: status || 'accepted' });
+  };
+
+  app.patch('/api/projects/:id/interest/:interestId', requireAuth, handleUpdateInterestStatus);
+  app.post('/api/projects/:id/interest/:interestId', requireAuth, handleUpdateInterestStatus);
+  app.patch('/api/projects/:id/pitch/:interestId', requireAuth, handleUpdateInterestStatus);
+  app.post('/api/projects/:id/pitch/:interestId', requireAuth, handleUpdateInterestStatus);
 
   // ==========================================
   // MESSAGES & REAL-TIME CHAT
@@ -960,6 +1067,11 @@ async function startServer() {
   app.post('/api/conversations/:id/messages', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     const { content, quotedMessageId, imageUrl } = req.body;
     const user = req.user!;
+
+    if (user.moderationStatus === 'muted' || user.moderationStatus === 'paused' || user.moderationStatus === 'banned') {
+      return res.status(403).json({ error: 'Your account is currently restricted from sending messages by Admin.' });
+    }
+
     const conv = serverDb.getConversation(req.params.id);
 
     if (!conv) {
@@ -1041,6 +1153,29 @@ async function startServer() {
     serverDb.markConversationRead(req.params.id, user.id);
     return res.json({ success: true });
   });
+
+  // Pin or unpin a message in a conversation
+  const handlePinConversationMessage = (req: AuthenticatedRequest, res: Response) => {
+    const user = req.user!;
+    const { messageId } = req.body;
+    const conv = serverDb.getConversation(req.params.id);
+
+    if (!conv) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+
+    const isGeneral = conv.type === 'general' || conv.id === 'conv_general';
+    const isMember = isGeneral || conv.participantIds.includes(user.id);
+    if (!isMember) {
+      return res.status(403).json({ error: 'Not a member of this conversation' });
+    }
+
+    const updated = serverDb.pinMessageToConversation(conv.id, messageId || null);
+    return res.json(updated);
+  };
+
+  app.patch('/api/conversations/:id/pin', requireAuth, handlePinConversationMessage);
+  app.post('/api/conversations/:id/pin', requireAuth, handlePinConversationMessage);
 
   // ==========================================
   // IN-APP NOTIFICATIONS

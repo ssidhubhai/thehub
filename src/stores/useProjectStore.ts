@@ -20,7 +20,7 @@ export interface ProjectState {
   selectedRoleTags: string[];
   isLoading: boolean;
 
-  fetchProjects: () => Promise<void>;
+  fetchProjects: (options?: { silent?: boolean }) => Promise<void>;
   fetchProjectDetails: (projectId: string) => Promise<Project | null>;
   createProject: (data: {
     name: string;
@@ -43,6 +43,7 @@ export interface ProjectState {
   ) => Promise<Project>;
   deleteProject: (projectId: string) => Promise<void>;
   expressInterest: (projectId: string, message?: string) => Promise<ProjectInterest>;
+  pitchProject: (projectId: string, message?: string) => Promise<ProjectInterest>;
   addProjectUpdate: (
     projectId: string,
     title: string,
@@ -64,8 +65,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   selectedRoleTags: [],
   isLoading: false,
 
-  fetchProjects: async () => {
-    set({ isLoading: true });
+  fetchProjects: async (options?: { silent?: boolean }) => {
+    if (!options?.silent) set({ isLoading: true });
     try {
       const serverProjects = await api.projects.list();
       const currentUser = useAuthStore.getState().user;
@@ -90,30 +91,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         isLoading: false,
       });
     } catch {
-      try {
-        mockDb.ensureInitialized();
-        const allProjects = await mockDb.list<Project>(STORAGE_KEYS.PROJECTS);
-        const currentUser = useAuthStore.getState().user;
-
-        // Check interests for current user
-        const interestMap: Record<string, boolean> = {};
-        if (currentUser) {
-          const allInterests = await mockDb.list<ProjectInterest>(STORAGE_KEYS.PROJECT_INTEREST);
-          allInterests.forEach((i) => {
-            if (i.userId === currentUser.id) {
-              interestMap[i.projectId] = true;
-            }
-          });
-        }
-
-        set({
-          projects: allProjects,
-          userInterests: interestMap,
-          isLoading: false,
-        });
-      } catch {
-        set({ isLoading: false });
-      }
+      set({ isLoading: false });
     }
   },
 
@@ -286,72 +264,25 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }));
       return created;
     } catch (apiErr: any) {
-      if (apiErr.message && !apiErr.message.includes('Failed to fetch')) {
+      if (apiErr.message?.includes('already expressed') || apiErr.message?.includes('already a team member') || apiErr.message?.includes('owner')) {
         throw apiErr;
       }
-      const project = await mockDb.get<Project>(STORAGE_KEYS.PROJECTS, projectId);
-      if (!project) throw new Error('Project not found');
-
-      if (project.ownerId === user.id || project.team.some((m) => m.userId === user.id)) {
-        throw new Error('You are already a team member or owner of this project');
-      }
-
-      const now = new Date().toISOString();
-      const newInterest: Omit<ProjectInterest, 'id'> = {
-        projectId,
-        userId: user.id,
-        applicant: {
-          id: user.id,
-          username: user.username,
-          displayName: user.profile.displayName,
-          avatarUrl: user.profile.avatarUrl,
-          avatarInitials: user.profile.avatarInitials,
-        },
-        message: message?.trim(),
-        status: 'submitted',
-        createdAt: now,
-      };
-
-      const created = await mockDb.create<ProjectInterest>(
-        STORAGE_KEYS.PROJECT_INTEREST,
-        newInterest as any
-      );
-
-      const newCount = (project.interestCount || 0) + 1;
-      await mockDb.update<Project>(STORAGE_KEYS.PROJECTS, projectId, {
-        interestCount: newCount,
-      });
-
-      const notif: Omit<InAppNotification, 'id'> = {
-        recipientId: project.ownerId,
-        type: 'project_interest',
-        payload: {
-          actorId: user.id,
-          actorName: user.profile.displayName,
-          actorAvatarUrl: user.profile.avatarUrl,
-          actorAvatarInitials: user.profile.avatarInitials,
-          targetId: projectId,
-          targetTitle: project.name,
-          messageSnippet: message?.trim() || `${user.profile.displayName} expressed interest in your project.`,
-          deepLinkUrl: `/projects/${projectId}?tab=roster`,
-        },
-        isRead: false,
-        createdAt: now,
-      };
-      await mockDb.create<InAppNotification>(STORAGE_KEYS.NOTIFICATIONS, notif as any);
-
+      const created = await mockDb.pitchProject(projectId, user.id, message);
       set((state) => ({
         userInterests: {
           ...state.userInterests,
           [projectId]: true,
         },
         projects: state.projects.map((p) =>
-          p.id === projectId ? { ...p, interestCount: newCount } : p
+          p.id === projectId ? { ...p, interestCount: (p.interestCount || 0) + 1 } : p
         ),
       }));
-
       return created;
     }
+  },
+
+  pitchProject: async (projectId: string, message?: string) => {
+    return get().expressInterest(projectId, message);
   },
 
   addProjectUpdate: async (projectId: string, title: string, content: string, imageUrl?: string) => {

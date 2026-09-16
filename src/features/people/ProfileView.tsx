@@ -8,6 +8,7 @@ import { VerifiedBadge } from '@/components/primitives/VerifiedBadge';
 import { PostCard } from '@/components/shared/PostCard';
 import { ProjectCard } from '@/components/shared/ProjectCard';
 import { EditProfileModal } from './EditProfileModal';
+import { AdminModerationModal } from './AdminModerationModal';
 import {
   ArrowLeft,
   UserPlus,
@@ -19,6 +20,7 @@ import {
   Calendar,
   Edit2,
   FolderGit2,
+  ShieldAlert,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from '@/components/primitives/Toast';
@@ -51,6 +53,7 @@ export function ProfileView({
   const { posts } = useFeedStore();
 
   const [isEditModalOpen, setIsEditModalOpen] = React.useState(false);
+  const [isAdminModModalOpen, setIsAdminModModalOpen] = React.useState(false);
   const [isConnecting, setIsConnecting] = React.useState(false);
 
   // Find the target profile
@@ -187,6 +190,21 @@ export function ProfileView({
                     You
                   </Badge>
                 )}
+                {profileUser.moderationStatus && profileUser.moderationStatus !== 'active' && (
+                  <Badge
+                    variant={
+                      profileUser.moderationStatus === 'banned'
+                        ? 'destructive'
+                        : profileUser.moderationStatus === 'paused'
+                        ? 'warning'
+                        : 'secondary'
+                    }
+                    size="sm"
+                    className="font-mono text-[10px] uppercase font-bold"
+                  >
+                    {profileUser.moderationStatus}
+                  </Badge>
+                )}
               </div>
               <p className="font-mono text-xs sm:text-sm text-muted-foreground">
                 @{profileUser.username}
@@ -199,7 +217,20 @@ export function ProfileView({
           </div>
 
           {/* Action Bar */}
-          <div className="flex items-center gap-2 self-start">
+          <div className="flex items-center gap-2 self-start flex-wrap">
+            {/* ADMIN ONLY CONTROLS */}
+            {isCurrentMod && !isSelf && (
+              <Button
+                variant="flame"
+                size="sm"
+                onClick={() => setIsAdminModModalOpen(true)}
+                iconPrefix={<ShieldAlert className="h-3.5 w-3.5 text-amber-300" />}
+                className="bg-amber-600 hover:bg-amber-700 text-white font-mono text-xs shadow-sm"
+              >
+                Moderate Builder
+              </Button>
+            )}
+
             {isSelf ? (
               <Button
                 variant="outline"
@@ -390,6 +421,15 @@ export function ProfileView({
         <EditProfileModal
           open={isEditModalOpen}
           onOpenChange={setIsEditModalOpen}
+        />
+      )}
+
+      {/* Admin Moderation Modal */}
+      {isCurrentMod && !isSelf && (
+        <AdminModerationModal
+          user={profileUser}
+          isOpen={isAdminModModalOpen}
+          onClose={() => setIsAdminModModalOpen(false)}
         />
       )}
     </div>

@@ -10,6 +10,8 @@ import {
   deleteDoc,
   onSnapshot,
 } from 'firebase/firestore';
+import { Connection } from '@/types/common';
+import { ProjectInterest } from '@/types/project';
 
 export interface DbService {
   get<T extends { id: string }>(collName: string, id: string): Promise<T | null>;
@@ -23,6 +25,13 @@ export interface DbService {
   delete(collName: string, id: string): Promise<void>;
   subscribe(collName: string, callback: () => void): () => void;
   resetDatabase(): void;
+
+  // Dedicated action mock handlers supporting POST requests
+  connect(senderId: string, recipientId: string): Promise<Connection>;
+  acceptConnection(connectionId: string, recipientId?: string): Promise<Connection>;
+  declineConnection(connectionId: string, recipientId?: string): Promise<void>;
+  pitchProject(projectId: string, userId: string, message?: string): Promise<ProjectInterest>;
+  expressInterest(projectId: string, userId: string, message?: string): Promise<ProjectInterest>;
 }
 
 class UnifiedDbService implements DbService {
@@ -134,6 +143,26 @@ class UnifiedDbService implements DbService {
 
   resetDatabase(): void {
     mockDb.resetToSeed();
+  }
+
+  async connect(senderId: string, recipientId: string): Promise<Connection> {
+    return mockDb.connect(senderId, recipientId);
+  }
+
+  async acceptConnection(connectionId: string, recipientId?: string): Promise<Connection> {
+    return mockDb.acceptConnection(connectionId, recipientId);
+  }
+
+  async declineConnection(connectionId: string, recipientId?: string): Promise<void> {
+    return mockDb.declineConnection(connectionId, recipientId);
+  }
+
+  async pitchProject(projectId: string, userId: string, message?: string): Promise<ProjectInterest> {
+    return mockDb.pitchProject(projectId, userId, message);
+  }
+
+  async expressInterest(projectId: string, userId: string, message?: string): Promise<ProjectInterest> {
+    return mockDb.expressInterest(projectId, userId, message);
   }
 }
 

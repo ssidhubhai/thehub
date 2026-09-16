@@ -12,6 +12,7 @@ export interface Conversation {
   description?: string;
   projectId?: string; // If linked to a project team chat
   participantIds: string[]; // List of user IDs
+  pinnedMessageId?: string | null; // Pinned announcement message in this chat
   lastMessage?: {
     senderId: string;
     senderDisplayName: string;
@@ -38,6 +39,7 @@ export interface Message {
   imageUrl?: string;
   quotedMessageId?: string;
   isEdited?: boolean;
+  isPinned?: boolean;
   createdAt: string; // ISO-8601
   updatedAt: string; // ISO-8601
 }

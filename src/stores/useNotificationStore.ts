@@ -10,7 +10,7 @@ export interface NotificationState {
   isDrawerOpen: boolean;
   isLoading: boolean;
 
-  fetchNotifications: () => Promise<void>;
+  fetchNotifications: (options?: { silent?: boolean }) => Promise<void>;
   setDrawerOpen: (isOpen: boolean) => void;
   markAsRead: (notificationId: string) => Promise<void>;
   markAllAsRead: () => Promise<void>;
@@ -24,8 +24,8 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
   isDrawerOpen: false,
   isLoading: false,
 
-  fetchNotifications: async () => {
-    set({ isLoading: true });
+  fetchNotifications: async (options?: { silent?: boolean }) => {
+    if (!options?.silent) set({ isLoading: true });
     try {
       const serverNotifs = await api.notifications.list();
       const unread = serverNotifs.filter((n) => !n.isRead).length;
@@ -35,32 +35,7 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
         isLoading: false,
       });
     } catch {
-      try {
-        mockDb.ensureInitialized();
-        const user = useAuthStore.getState().user;
-        if (!user) {
-          set({ notifications: [], unreadCount: 0, isLoading: false });
-          return;
-        }
-
-        const allNotifs = await mockDb.list<InAppNotification>(
-          STORAGE_KEYS.NOTIFICATIONS,
-          (n) => n.recipientId === user.id
-        );
-
-        const sorted = [...allNotifs].sort(
-          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
-        const unread = sorted.filter((n) => !n.isRead).length;
-
-        set({
-          notifications: sorted,
-          unreadCount: unread,
-          isLoading: false,
-        });
-      } catch {
-        set({ isLoading: false });
-      }
+      set({ isLoading: false });
     }
   },
 

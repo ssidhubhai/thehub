@@ -2,7 +2,7 @@ import { User, UserProfile } from '@/types/user';
 import { mockDb, STORAGE_KEYS } from './mock/mockDb';
 import { eventBus } from './mock/eventBus';
 import { getInitials } from '@/lib/utils';
-import { api } from '@/lib/api';
+import { api, setStoredToken } from '@/lib/api';
 
 export interface AuthService {
   signUp(username: string, password?: string): Promise<User>;
@@ -32,13 +32,19 @@ class UnifiedAuthService implements AuthService {
     }
   }
 
-  private persistSession(user: User | null): void {
+  private persistSession(user: User | null, token?: string): void {
     this.currentUser = user;
     if (typeof window === 'undefined') return;
     if (user) {
       localStorage.setItem(STORAGE_KEYS.AUTH_SESSION, JSON.stringify(user));
+      if (token) {
+        setStoredToken(token);
+      } else {
+        setStoredToken(`token_${user.id}_${user.username}`);
+      }
     } else {
       localStorage.removeItem(STORAGE_KEYS.AUTH_SESSION);
+      setStoredToken(null);
     }
     eventBus.emit('auth:state_change', user);
   }
@@ -51,86 +57,27 @@ class UnifiedAuthService implements AuthService {
     if (cleanUsername.length < 3) {
       throw new Error('Username must be at least 3 characters');
     }
-
-    try {
-      const { user } = await api.auth.register(cleanUsername, password);
-      this.persistSession(user);
-      return user;
-    } catch (apiErr: any) {
-      // If server returned a meaningful user validation message (like username taken), throw it
-      const msg = apiErr?.message || '';
-      if (msg.includes('already taken') || msg.includes('Username must be') || msg.includes('Username can only')) {
-        throw apiErr;
-      }
-      // On static hosting (Vercel static without custom backend), /api routes return 405/404.
-      // Gracefully fall back to the live client data store.
-      const existingUsers = await mockDb.list<User>(STORAGE_KEYS.USERS);
-      const existing = existingUsers.find((u) => u.username.toLowerCase() === cleanUsername);
-      if (existing) {
-        throw new Error('Username is already taken');
-      }
-
-      const now = new Date().toISOString();
-      const newUser: User = {
-        id: `user_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        username: cleanUsername,
-        passwordHash: password ? `mock_hash_${password}` : undefined,
-        profile: {
-          displayName: cleanUsername,
-          bio: '',
-          avatarInitials: getInitials(cleanUsername),
-          interests: [],
-          currentlyLearning: '',
-          currentlyBuilding: '',
-          joinedAt: now,
-          isOnboarded: false,
-        },
-        presence: {
-          status: 'online',
-          lastActiveAt: now,
-        },
-        createdAt: now,
-        updatedAt: now,
-      };
-
-      await mockDb.create<User>(STORAGE_KEYS.USERS, newUser);
-      this.persistSession(newUser);
-      return newUser;
+    if (!password || password.trim().length < 3) {
+      throw new Error('Password must be at least 3 characters long');
     }
+
+    const { user, token } = await api.auth.register(cleanUsername, password);
+    this.persistSession(user, token);
+    return user;
   }
 
   async signIn(username: string, password?: string): Promise<User> {
     const cleanUsername = username.trim().toLowerCase();
-    try {
-      const { user } = await api.auth.login(cleanUsername, password);
-      this.persistSession(user);
-      return user;
-    } catch (apiErr: any) {
-      const msg = apiErr?.message || '';
-      // Only rethrow explicit credential errors when from backend
-      if (msg.includes('Invalid password') || msg.includes('User not found with this username')) {
-        throw apiErr;
-      }
-      const existingUsers = await mockDb.list<User>(STORAGE_KEYS.USERS);
-      const user = existingUsers.find((u) => u.username.toLowerCase() === cleanUsername);
-
-      if (!user) {
-        throw new Error('User not found with this username. Please click "Create an account" to register.');
-      }
-
-      if (password && user.passwordHash && user.passwordHash !== `mock_hash_${password}`) {
-        throw new Error('Invalid password. Please check your credentials.');
-      }
-
-      user.presence = {
-        status: 'online',
-        lastActiveAt: new Date().toISOString(),
-      };
-      await mockDb.update<User>(STORAGE_KEYS.USERS, user.id, { presence: user.presence });
-
-      this.persistSession(user);
-      return user;
+    if (!cleanUsername) {
+      throw new Error('Username is required');
     }
+    if (!password) {
+      throw new Error('Password is required');
+    }
+
+    const { user, token } = await api.auth.login(cleanUsername, password);
+    this.persistSession(user, token);
+    return user;
   }
 
   async signOut(): Promise<void> {

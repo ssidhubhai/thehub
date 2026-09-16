@@ -48,6 +48,17 @@ export function HomeFeed({
     }
   }, [focusedPostId, posts]);
 
+  // Ensure feed posts are strictly ordered with pinned posts first
+  const sortedPosts = React.useMemo(() => {
+    return [...posts].sort((a, b) => {
+      const aPin = Boolean(a.isPinned);
+      const bPin = Boolean(b.isPinned);
+      if (aPin && !bPin) return -1;
+      if (!aPin && bPin) return 1;
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+  }, [posts]);
+
   // Greeting calculation (F29)
   const currentHour = new Date().getHours();
   const timeGreeting =
@@ -114,18 +125,18 @@ export function HomeFeed({
               <span>COMMUNITY THREADS</span>
             </h2>
             <span className="font-mono text-[11px] text-muted-foreground">
-              {posts.length} {posts.length === 1 ? 'post' : 'posts'}
+              {sortedPosts.length} {sortedPosts.length === 1 ? 'post' : 'posts'}
             </span>
           </div>
 
           {/* Posts List */}
-          {isFeedLoading && posts.length === 0 ? (
+          {isFeedLoading && sortedPosts.length === 0 ? (
             <div className="space-y-4">
               <Skeleton className="h-40 w-full rounded-2xl" />
               <Skeleton className="h-32 w-full rounded-2xl" />
               <Skeleton className="h-36 w-full rounded-2xl" />
             </div>
-          ) : posts.length === 0 ? (
+          ) : sortedPosts.length === 0 ? (
             <EmptyState
               title="It's quiet here"
               description="Be the first to share something with your fellow community builders."
@@ -137,7 +148,7 @@ export function HomeFeed({
             />
           ) : (
             <div className="space-y-5">
-              {posts.map((post) => (
+              {sortedPosts.map((post) => (
                 <PostCard
                   key={post.id}
                   post={post}

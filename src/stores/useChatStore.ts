@@ -15,10 +15,10 @@ export interface ChatState {
   blockedUserIds: string[];
   mutedConversationIds: string[];
 
-  fetchConversations: () => Promise<void>;
+  fetchConversations: (options?: { silent?: boolean }) => Promise<void>;
   setActiveConversation: (id: string | null) => void;
   setActiveTab: (tab: 'private' | 'groups') => void;
-  fetchMessages: (conversationId: string) => Promise<Message[]>;
+  fetchMessages: (conversationId: string, options?: { silent?: boolean }) => Promise<Message[]>;
   sendMessage: (
     conversationId: string,
     content: string,
@@ -33,6 +33,10 @@ export interface ChatState {
   deleteMessage: (
     conversationId: string,
     messageId: string
+  ) => Promise<void>;
+  pinMessage: (
+    conversationId: string,
+    messageId: string | null
   ) => Promise<void>;
   toggleBlockUser: (targetUserId: string) => void;
   toggleMuteConversation: (conversationId: string) => void;
@@ -76,8 +80,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   blockedUserIds: getStoredBlockedUsers(),
   mutedConversationIds: getStoredMutedConvs(),
 
-  fetchConversations: async () => {
-    set({ isLoading: true });
+  fetchConversations: async (options?: { silent?: boolean }) => {
+    if (!options?.silent) set({ isLoading: true });
     try {
       const serverConvs = await api.conversations.list();
       let convs = Array.isArray(serverConvs) ? serverConvs : [];
@@ -102,46 +106,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       set({ conversations: convs, isLoading: false });
     } catch {
-      try {
-        mockDb.ensureInitialized();
-        const user = useAuthStore.getState().user;
-        const allConvs = await mockDb.list<Conversation>(STORAGE_KEYS.CONVERSATIONS);
-
-        // Filter conversations for the current user (or include General)
-        const userConvs = user
-          ? allConvs.filter(
-              (c) => c.type === 'general' || c.id === 'conv_general' || c.participantIds.includes(user.id)
-            )
-          : allConvs.filter((c) => c.type === 'general' || c.id === 'conv_general');
-
-        if (!userConvs.some((c) => c.type === 'general' || c.id === 'conv_general')) {
-          userConvs.unshift({
-            id: 'conv_general',
-            type: 'general',
-            title: 'The Hub — General Community',
-            description: 'Public common space for all builders and members of The Hub to hang out, share ideas, and talk!',
-            participantIds: ['user_sidhu001'],
-            unreadCounts: {},
-            createdAt: '2026-01-01T00:00:00.000Z',
-            updatedAt: new Date().toISOString(),
-            lastMessage: {
-              senderId: 'user_sidhu001',
-              senderDisplayName: 'Sidhu',
-              content: 'Welcome everyone to The Hub! Feel free to introduce yourself, share what you are building, or ask any questions.',
-              createdAt: '2026-01-01T00:00:00.000Z',
-            },
-          });
-        }
-
-        // Sort with latest message / updatedAt first
-        const sorted = [...userConvs].sort(
-          (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-        );
-
-        set({ conversations: sorted, isLoading: false });
-      } catch {
-        set({ isLoading: false });
-      }
+      set({ isLoading: false });
     }
   },
 
@@ -155,7 +120,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setActiveTab: (tab) => set({ activeTab: tab }),
 
-  fetchMessages: async (conversationId: string) => {
+  fetchMessages: async (conversationId: string, options?: { silent?: boolean }) => {
     try {
       const serverMessages = await api.conversations.listMessages(conversationId);
       set((state) => ({
@@ -166,25 +131,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }));
       return serverMessages;
     } catch {
-      mockDb.ensureInitialized();
-      const allMessages = await mockDb.list<Message>(
-        STORAGE_KEYS.MESSAGES,
-        (m) => m.conversationId === conversationId
-      );
-
-      // Sort ascending by time
-      const sorted = [...allMessages].sort(
-        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-      );
-
-      set((state) => ({
-        messages: {
-          ...state.messages,
-          [conversationId]: sorted,
-        },
-      }));
-
-      return sorted;
+      return get().messages[conversationId] || [];
     }
   },
 
@@ -476,6 +423,41 @@ export const useChatStore = create<ChatState>((set, get) => ({
           [conversationId]: (state.messages[conversationId] || []).filter(
             (m) => m.id !== messageId
           ),
+        },
+      }));
+    }
+  },
+
+  pinMessage: async (conversationId: string, messageId: string | null) => {
+    try {
+      const updated = await api.conversations.pinMessage(conversationId, messageId);
+      set((state) => ({
+        conversations: state.conversations.map((c) =>
+          c.id === conversationId ? { ...c, pinnedMessageId: messageId } : c
+        ),
+        messages: {
+          ...state.messages,
+          [conversationId]: (state.messages[conversationId] || []).map((m) => ({
+            ...m,
+            isPinned: Boolean(messageId && m.id === messageId),
+          })),
+        },
+      }));
+    } catch {
+      await mockDb.update<Conversation>(STORAGE_KEYS.CONVERSATIONS, conversationId, {
+        pinnedMessageId: messageId,
+        updatedAt: new Date().toISOString(),
+      });
+      set((state) => ({
+        conversations: state.conversations.map((c) =>
+          c.id === conversationId ? { ...c, pinnedMessageId: messageId } : c
+        ),
+        messages: {
+          ...state.messages,
+          [conversationId]: (state.messages[conversationId] || []).map((m) => ({
+            ...m,
+            isPinned: Boolean(messageId && m.id === messageId),
+          })),
         },
       }));
     }

@@ -137,6 +137,12 @@ export const api = {
         body: JSON.stringify({ status }),
       });
     },
+    updateModeration: async (userId: string, moderationStatus: string, moderationReason?: string) => {
+      return request<{ user: User; success: boolean }>(`/api/users/${userId}/moderation`, {
+        method: 'PATCH',
+        body: JSON.stringify({ moderationStatus, moderationReason }),
+      });
+    },
   },
 
   connections: {
@@ -144,6 +150,12 @@ export const api = {
       return request<Connection[]>('/api/connections');
     },
     request: async (recipientId: string) => {
+      return request<Connection>('/api/connections', {
+        method: 'POST',
+        body: JSON.stringify({ recipientId }),
+      });
+    },
+    connect: async (recipientId: string) => {
       return request<Connection>('/api/connections', {
         method: 'POST',
         body: JSON.stringify({ recipientId }),
@@ -281,6 +293,18 @@ export const api = {
         body: JSON.stringify({ message }),
       });
     },
+    pitch: async (projectId: string, message?: string) => {
+      return request<ProjectInterest>(`/api/projects/${projectId}/pitch`, {
+        method: 'POST',
+        body: JSON.stringify({ message }),
+      });
+    },
+    pitchProject: async (projectId: string, message?: string) => {
+      return request<ProjectInterest>(`/api/projects/${projectId}/pitch`, {
+        method: 'POST',
+        body: JSON.stringify({ message }),
+      });
+    },
     updateInterest: async (projectId: string, interestId: string, status: string) => {
       return request<ProjectInterest>(`/api/projects/${projectId}/interest/${interestId}`, {
         method: 'PATCH',
@@ -331,6 +355,12 @@ export const api = {
     deleteMessage: async (conversationId: string, messageId: string) => {
       return request<{ success: boolean; messageId: string }>(`/api/conversations/${conversationId}/messages/${messageId}`, {
         method: 'DELETE',
+      });
+    },
+    pinMessage: async (conversationId: string, messageId: string | null) => {
+      return request<Conversation>(`/api/conversations/${conversationId}/pin`, {
+        method: 'PATCH',
+        body: JSON.stringify({ messageId }),
       });
     },
     markRead: async (conversationId: string) => {
