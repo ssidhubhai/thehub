@@ -69,17 +69,41 @@ async function request<T>(
     headers,
   });
 
+  const contentType = res.headers.get('content-type') || '';
+  const isJson = contentType.includes('application/json');
+
   if (!res.ok) {
     let errorMsg = `Request failed: ${res.status}`;
-    try {
-      const errorData = await res.json();
-      if (errorData?.error) {
-        errorMsg = errorData.error;
+    if (isJson) {
+      try {
+        const errorData = await res.json();
+        if (errorData?.error) {
+          errorMsg = errorData.error;
+        }
+      } catch {
+        // ignore
       }
-    } catch {
-      // ignore
+    } else {
+      try {
+        const text = await res.text();
+        if (text) errorMsg = `${res.status}: ${text.slice(0, 100)}`;
+      } catch {
+        // ignore
+      }
     }
     throw new Error(errorMsg);
+  }
+
+  if (!isJson) {
+    const text = await res.text();
+    if (text && text.startsWith('<!doctype')) {
+      throw new Error(`Server returned HTML instead of JSON (${res.status})`);
+    }
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      throw new Error(`Invalid JSON response from ${endpoint}`);
+    }
   }
 
   return res.json() as Promise<T>;

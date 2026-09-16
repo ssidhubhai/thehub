@@ -18,69 +18,73 @@ interface AuthenticatedRequest extends Request {
 
 // Authentication extraction middleware
 const authMiddleware = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-  const authHeader = req.headers.authorization;
-  let token: string | undefined;
+  try {
+    const authHeader = req.headers.authorization;
+    let token: string | undefined;
 
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    token = authHeader.slice(7).trim();
-  } else if (req.headers['x-auth-token']) {
-    token = req.headers['x-auth-token'] as string;
-  } else if (typeof req.query.token === 'string') {
-    token = req.query.token;
-  }
-
-  const headerUserId = req.headers['x-user-id'] as string | undefined;
-  const headerUsername = req.headers['x-username'] as string | undefined;
-  const headerUserData = req.headers['x-user-data'] as string | undefined;
-
-  let user: User | undefined;
-
-  if (token) {
-    user = serverDb.findUserByToken(token);
-    if (!user && token.startsWith('token_')) {
-      // Find matching user from database by ID or username
-      user = serverDb.listUsers().find((u) => token?.includes(u.id) || (u.username && token?.includes(u.username)));
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.slice(7).trim();
+    } else if (req.headers['x-auth-token']) {
+      token = req.headers['x-auth-token'] as string;
+    } else if (typeof req.query.token === 'string') {
+      token = req.query.token;
     }
-  }
 
-  if (!user && headerUserId) {
-    user = serverDb.findUserById(headerUserId);
-  }
+    const headerUserId = req.headers['x-user-id'] as string | undefined;
+    const headerUsername = req.headers['x-username'] as string | undefined;
+    const headerUserData = req.headers['x-user-data'] as string | undefined;
 
-  if (!user && headerUsername) {
-    user = serverDb.findUserByUsername(headerUsername);
-  }
+    let user: User | undefined;
 
-  // If user payload was passed from authenticated client and not yet in serverDb (e.g. server restart), restore user
-  if (!user && headerUserData) {
-    try {
-      const parsedUser = JSON.parse(decodeURIComponent(headerUserData)) as User;
-      if (parsedUser && parsedUser.id && parsedUser.username) {
-        user = serverDb.findUserById(parsedUser.id) || serverDb.findUserByUsername(parsedUser.username);
-        if (!user) {
-          user = serverDb.createUser(parsedUser);
-        }
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  if (user) {
-    req.user = user;
     if (token) {
-      serverDb.createSessionWithToken(token, user.id);
-      req.token = token;
-    } else {
-      req.token = serverDb.createSession(user.id);
+      user = serverDb.findUserByToken(token);
+      if (!user && token.startsWith('token_')) {
+        // Find matching user from database by ID or username
+        user = serverDb.listUsers().find((u) => token?.includes(u.id) || (u.username && token?.includes(u.username)));
+      }
     }
-    // Update last active
-    serverDb.updateUser(user.id, {
-      presence: {
-        status: 'online',
-        lastActiveAt: new Date().toISOString(),
-      },
-    });
+
+    if (!user && headerUserId) {
+      user = serverDb.findUserById(headerUserId);
+    }
+
+    if (!user && headerUsername) {
+      user = serverDb.findUserByUsername(headerUsername);
+    }
+
+    // If user payload was passed from authenticated client and not yet in serverDb (e.g. server restart), restore user
+    if (!user && headerUserData) {
+      try {
+        const parsedUser = JSON.parse(decodeURIComponent(headerUserData)) as User;
+        if (parsedUser && parsedUser.id && parsedUser.username) {
+          user = serverDb.findUserById(parsedUser.id) || serverDb.findUserByUsername(parsedUser.username);
+          if (!user) {
+            user = serverDb.createUser(parsedUser);
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    if (user) {
+      req.user = user;
+      if (token) {
+        serverDb.createSessionWithToken(token, user.id);
+        req.token = token;
+      } else {
+        req.token = serverDb.createSession(user.id);
+      }
+      // Update last active
+      serverDb.updateUser(user.id, {
+        presence: {
+          status: 'online',
+          lastActiveAt: new Date().toISOString(),
+        },
+      });
+    }
+  } catch (err) {
+    console.error('Auth middleware error:', err);
   }
 
   next();
@@ -241,8 +245,8 @@ async function startServer() {
     return res.json({ user: safeUser, token: req.token });
   });
 
-  // Logout
-  app.post('/api/auth/logout', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  // Logout (optional auth)
+  app.post('/api/auth/logout', (req: AuthenticatedRequest, res: Response) => {
     if (req.token) {
       serverDb.removeSession(req.token);
     }
@@ -1217,6 +1221,17 @@ async function startServer() {
   app.post('/api/admin/reset', (_req: Request, res: Response) => {
     serverDb.resetToSeed();
     return res.json({ success: true, message: 'Database reset to clean seed data' });
+  });
+
+  // Catch-all 404 handler for unhandled /api requests to prevent HTML fallback
+  app.all('/api/*', (req: Request, res: Response) => {
+    res.status(404).json({ error: `API endpoint ${req.method} ${req.path} not found` });
+  });
+
+  // Global Express JSON error handling middleware
+  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+    console.error('API Error:', err);
+    res.status(err?.status || 500).json({ error: err?.message || 'Internal server error' });
   });
 
   // ==========================================
