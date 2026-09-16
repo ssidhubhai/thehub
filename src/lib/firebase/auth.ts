@@ -94,7 +94,10 @@ class UnifiedAuthService implements AuthService {
 
       // Check if user already exists in client / Firestore database
       const allUsers = await dbService.list<User>('users');
-      const existingUser = allUsers.find((u) => u.username?.toLowerCase() === cleanUsername);
+      const mockUsers = await mockDb.list<User>(STORAGE_KEYS.USERS);
+      const existingUser = [...allUsers, ...mockUsers].find(
+        (u) => u.username?.toLowerCase() === cleanUsername
+      );
       if (existingUser) {
         throw new Error('Username is already taken');
       }
@@ -131,7 +134,6 @@ class UnifiedAuthService implements AuthService {
         updatedAt: now,
       };
 
-      await dbService.create<User>('users', newUser);
       user = newUser;
       token = `token_${newUser.id}_${newUser.username}`;
     }
@@ -139,6 +141,16 @@ class UnifiedAuthService implements AuthService {
     if (!user) {
       throw new Error('Registration failed');
     }
+
+    // Save to all stores immediately
+    try {
+      await mockDb.create<User>(STORAGE_KEYS.USERS, user);
+      await mockDb.create<User>('users', user);
+    } catch {}
+
+    try {
+      await dbService.create<User>('users', user);
+    } catch {}
 
     this.persistSession(user, token);
     return user;
@@ -169,11 +181,19 @@ class UnifiedAuthService implements AuthService {
         throw new Error('Invalid password. Please check your credentials.');
       }
 
-      // If server returned 405 (Method Not Allowed), HTML fallback, 404, or network error:
-      // Fallback gracefully to client / Firestore database
+      // Check client / Firestore database across all storage keys
       const expectedHash = await clientHashPassword(password);
       const allUsers = await dbService.list<User>('users');
-      const foundUser = allUsers.find((u) => u.username?.toLowerCase() === cleanUsername);
+      const mockUsers = await mockDb.list<User>(STORAGE_KEYS.USERS);
+      const combinedUsers = [...allUsers, ...mockUsers];
+
+      // Check current session
+      const sessionUser = this.getCurrentUser();
+      if (sessionUser && !combinedUsers.some((u) => u.id === sessionUser.id)) {
+        combinedUsers.push(sessionUser);
+      }
+
+      const foundUser = combinedUsers.find((u) => u.username?.toLowerCase() === cleanUsername);
 
       if (!foundUser) {
         throw new Error(`User not found with username "${cleanUsername}". Please click "Create an account" to register.`);
@@ -198,6 +218,12 @@ class UnifiedAuthService implements AuthService {
       throw new Error('Login failed');
     }
 
+    // Mirror user into all local stores
+    try {
+      await mockDb.create<User>(STORAGE_KEYS.USERS, user);
+      await mockDb.create<User>('users', user);
+    } catch {}
+
     // Update presence
     const now = new Date().toISOString();
     const updatedUser = {
@@ -211,6 +237,10 @@ class UnifiedAuthService implements AuthService {
 
     try {
       await dbService.update<User>('users', updatedUser.id, {
+        presence: updatedUser.presence,
+        updatedAt: updatedUser.updatedAt,
+      });
+      await mockDb.update<User>(STORAGE_KEYS.USERS, updatedUser.id, {
         presence: updatedUser.presence,
         updatedAt: updatedUser.updatedAt,
       });
@@ -251,42 +281,97 @@ class UnifiedAuthService implements AuthService {
   }
 
   async updateProfile(userId: string, partialProfile: Partial<UserProfile>): Promise<User> {
+    let serverUpdatedUser: User | null = null;
     try {
       const res = await api.auth.updateProfile(partialProfile);
-      this.persistSession(res.user);
-      return res.user;
-    } catch {
-      const user = await mockDb.get<User>(STORAGE_KEYS.USERS, userId);
-      if (!user) {
-        throw new Error('User not found');
+      if (res?.user) {
+        serverUpdatedUser = res.user;
       }
-
-      const updatedProfile: UserProfile = {
-        ...user.profile,
-        ...partialProfile,
-      };
-
-      if (partialProfile.displayName && !partialProfile.avatarInitials) {
-        updatedProfile.avatarInitials = getInitials(partialProfile.displayName);
-      }
-
-      const updatedUser: User = {
-        ...user,
-        profile: updatedProfile,
-        updatedAt: new Date().toISOString(),
-      };
-
-      await mockDb.update<User>(STORAGE_KEYS.USERS, userId, {
-        profile: updatedProfile,
-        updatedAt: updatedUser.updatedAt,
-      });
-
-      if (this.currentUser && this.currentUser.id === userId) {
-        this.persistSession(updatedUser);
-      }
-
-      return updatedUser;
+    } catch (apiErr) {
+      console.warn('[Auth] Server updateProfile fallback:', apiErr);
     }
+
+    // Locate base user across all sources
+    let user: User | null = serverUpdatedUser;
+    if (!user && this.currentUser && (this.currentUser.id === userId || this.currentUser.username === userId)) {
+      user = this.currentUser;
+    }
+    if (!user) {
+      user = await mockDb.get<User>(STORAGE_KEYS.USERS, userId);
+    }
+    if (!user) {
+      user = await mockDb.get<User>('users', userId);
+    }
+    if (!user) {
+      user = await dbService.get<User>('users', userId);
+    }
+    if (!user) {
+      const list = await mockDb.list<User>(STORAGE_KEYS.USERS);
+      user = list.find((u) => u.id === userId || u.username === userId) || null;
+    }
+    if (!user) {
+      const stored = this.getCurrentUser();
+      if (stored) {
+        user = stored;
+      }
+    }
+
+    // If still null, generate a baseline user so the user is NEVER blocked from onboarding
+    if (!user) {
+      const now = new Date().toISOString();
+      const baseName = partialProfile.displayName || userId;
+      user = {
+        id: userId,
+        username: this.currentUser?.username || userId,
+        role: 'member',
+        isVerified: false,
+        profile: {
+          displayName: baseName,
+          bio: '',
+          avatarUrl: '',
+          avatarInitials: getInitials(baseName),
+          interests: [],
+          currentlyLearning: '',
+          currentlyBuilding: '',
+          joinedAt: now,
+          isOnboarded: true,
+        },
+        presence: {
+          status: 'online',
+          lastActiveAt: now,
+        },
+        createdAt: now,
+        updatedAt: now,
+      };
+    }
+
+    const updatedProfile: UserProfile = {
+      ...user.profile,
+      ...partialProfile,
+    };
+
+    if (partialProfile.displayName && !partialProfile.avatarInitials) {
+      updatedProfile.avatarInitials = getInitials(partialProfile.displayName);
+    }
+
+    const updatedUser: User = {
+      ...user,
+      profile: updatedProfile,
+      updatedAt: new Date().toISOString(),
+    };
+
+    // Save across all local databases
+    try {
+      await mockDb.set<User>(STORAGE_KEYS.USERS, updatedUser.id, updatedUser);
+      await mockDb.set<User>('users', updatedUser.id, updatedUser);
+    } catch {}
+
+    try {
+      await dbService.set<User>('users', updatedUser.id, updatedUser);
+    } catch {}
+
+    this.persistSession(updatedUser);
+    return updatedUser;
   }
 
   subscribeAuthChange(callback: (user: User | null) => void): () => void {

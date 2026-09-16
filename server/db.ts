@@ -71,12 +71,9 @@ class DatabaseManager {
       if (fs.existsSync(DB_FILE)) {
         const raw = fs.readFileSync(DB_FILE, 'utf-8');
         const parsed = JSON.parse(raw) as HubDatabaseSchema;
-        // If the database contains dummy mock users like maya_lin or alex_river, purge them
+        // If the database contains dummy mock users like maya_lin or alex_river, prune them without losing registered users
         if (parsed.users && parsed.users.some((u) => u.username === 'maya_lin' || u.username === 'alex_river')) {
-          const fresh = this.getSeedSchema();
-          this.ensureLeadAccount(fresh);
-          this.persist(fresh);
-          return fresh;
+          parsed.users = parsed.users.filter((u) => u.username !== 'maya_lin' && u.username !== 'alex_river');
         }
         this.ensureLeadAccount(parsed);
         this.persist(parsed);
@@ -337,7 +334,7 @@ class DatabaseManager {
   }
 
   public updateUser(userId: string, partial: Partial<User>): User | undefined {
-    const user = this.findUserById(userId);
+    const user = this.findUserById(userId) || this.findUserByUsername(userId);
     if (!user) return undefined;
 
     if (partial.profile) {

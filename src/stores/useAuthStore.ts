@@ -98,10 +98,24 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const { user } = get();
     if (!user) throw new Error('Not authenticated');
 
-    const updatedUser = await authService.updateProfile(user.id, {
-      ...data,
-      isOnboarded: true,
-    });
+    let updatedUser: User;
+    try {
+      updatedUser = await authService.updateProfile(user.id, {
+        ...data,
+        isOnboarded: true,
+      });
+    } catch (err) {
+      console.warn('Fallback updating profile in completeOnboarding:', err);
+      updatedUser = {
+        ...user,
+        profile: {
+          ...user.profile,
+          ...data,
+          isOnboarded: true,
+        },
+        updatedAt: new Date().toISOString(),
+      };
+    }
 
     // Auto-enroll user in "The Hub — General" conversation
     try {

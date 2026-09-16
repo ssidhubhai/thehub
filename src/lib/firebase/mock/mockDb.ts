@@ -47,26 +47,64 @@ export class MockDatabase {
     this.ensureInitialized();
   }
 
+  public static normalizeKey(collectionKey: string): string {
+    const keyMap: Record<string, string> = {
+      users: STORAGE_KEYS.USERS,
+      posts: STORAGE_KEYS.POSTS,
+      comments: STORAGE_KEYS.COMMENTS,
+      reactions: STORAGE_KEYS.REACTIONS,
+      projects: STORAGE_KEYS.PROJECTS,
+      project_updates: STORAGE_KEYS.PROJECT_UPDATES,
+      project_discussions: STORAGE_KEYS.PROJECT_DISCUSSIONS,
+      project_interest: STORAGE_KEYS.PROJECT_INTEREST,
+      conversations: STORAGE_KEYS.CONVERSATIONS,
+      messages: STORAGE_KEYS.MESSAGES,
+      notifications: STORAGE_KEYS.NOTIFICATIONS,
+      connections: STORAGE_KEYS.CONNECTIONS,
+    };
+    return keyMap[collectionKey] || (collectionKey.startsWith('thehub_') ? collectionKey : `thehub_${collectionKey}`);
+  }
+
   public ensureInitialized(): void {
     try {
       if (typeof window === 'undefined') return;
 
       const usersRaw = localStorage.getItem(STORAGE_KEYS.USERS);
-      if (!usersRaw) {
+      const altUsersRaw = localStorage.getItem('users');
+
+      if (!usersRaw && !altUsersRaw) {
         this.resetToSeed();
         return;
       }
 
-      // Validate JSON integrity and purge old seed data if present
+      // Check for dummy mock users like maya_lin and prune them non-destructively
       try {
-        const parsed = JSON.parse(usersRaw);
-        if (Array.isArray(parsed)) {
-          const hasDummyUser = parsed.some((u: any) => u.username === 'maya_lin' || u.username === 'alex_river');
-          if (hasDummyUser) {
-            this.resetToSeed();
-            return;
-          }
+        let parsed: any[] = [];
+        if (usersRaw) {
+          const u = JSON.parse(usersRaw);
+          if (Array.isArray(u)) parsed.push(...u);
         }
+        if (altUsersRaw) {
+          const a = JSON.parse(altUsersRaw);
+          if (Array.isArray(a)) parsed.push(...a);
+        }
+
+        // Deduplicate and filter out dummy users
+        const userMap = new Map<string, any>();
+        parsed.forEach((user) => {
+          if (user && user.username && user.username !== 'maya_lin' && user.username !== 'alex_river') {
+            userMap.set(user.username.toLowerCase(), user);
+          }
+        });
+
+        // Ensure sidhu001 exists
+        if (!userMap.has('sidhu001')) {
+          userMap.set('sidhu001', this.getLeadUser());
+        }
+
+        const cleanedUsers = Array.from(userMap.values());
+        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(cleanedUsers));
+        localStorage.setItem('users', JSON.stringify(cleanedUsers));
       } catch {
         console.warn('Corrupted database detected in localStorage, restoring seed data');
         this.resetToSeed();
@@ -76,14 +114,8 @@ export class MockDatabase {
     }
   }
 
-  public resetToSeed(): void {
-    if (typeof window === 'undefined') return;
-
-    // Retain sidhu001 lead user without dummy data
-    const existingUsers = this.getItems<any>(STORAGE_KEYS.USERS);
-    const existingSidhu = existingUsers.find((u) => u.username === 'sidhu001');
-
-    const sidhuUser = existingSidhu || {
+  public getLeadUser(): any {
+    return {
       id: 'user_sidhu001',
       username: 'sidhu001',
       passwordHash: 'a385751d4e446a8c4f6bdf6c8f89c41c2d4971cb11a8f6aa6b094a21fe9628de',
@@ -109,8 +141,37 @@ export class MockDatabase {
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: new Date().toISOString(),
     };
+  }
 
-    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify([sidhuUser]));
+  public resetToSeed(): void {
+    if (typeof window === 'undefined') return;
+
+    // Retain all real registered users, ensuring no user is forgotten
+    const rawUsers = localStorage.getItem(STORAGE_KEYS.USERS);
+    const altRawUsers = localStorage.getItem('users');
+    let combinedUsers: any[] = [];
+
+    try {
+      if (rawUsers) combinedUsers.push(...JSON.parse(rawUsers));
+      if (altRawUsers) combinedUsers.push(...JSON.parse(altRawUsers));
+    } catch {}
+
+    const userMap = new Map<string, any>();
+    combinedUsers.forEach((u) => {
+      if (u && u.username && u.username !== 'maya_lin' && u.username !== 'alex_river') {
+        userMap.set(u.username.toLowerCase(), u);
+      }
+    });
+
+    // Ensure sidhu001 lead user is intact
+    if (!userMap.has('sidhu001')) {
+      userMap.set('sidhu001', this.getLeadUser());
+    }
+
+    const preservedUsers = Array.from(userMap.values());
+
+    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(preservedUsers));
+    localStorage.setItem('users', JSON.stringify(preservedUsers));
     localStorage.setItem(STORAGE_KEYS.POSTS, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.COMMENTS, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.REACTIONS, JSON.stringify([]));
@@ -126,24 +187,56 @@ export class MockDatabase {
     eventBus.emit('database:reset');
   }
 
-  private getItems<T>(collectionKey: string): T[] {
+  public getItems<T>(collectionKey: string): T[] {
     this.ensureInitialized();
+    const normalizedKey = MockDatabase.normalizeKey(collectionKey);
     try {
-      const raw = localStorage.getItem(collectionKey);
-      if (!raw) return [];
-      return JSON.parse(raw) as T[];
+      const raw = localStorage.getItem(normalizedKey);
+      let items: T[] = raw ? JSON.parse(raw) : [];
+
+      // Check un-prefixed key and merge if any items were saved under that key
+      const unPrefixed = collectionKey.replace('thehub_', '');
+      if (unPrefixed !== normalizedKey) {
+        const altRaw = localStorage.getItem(unPrefixed);
+        if (altRaw) {
+          try {
+            const altItems = JSON.parse(altRaw) as T[];
+            if (Array.isArray(altItems) && altItems.length > 0) {
+              const existingIds = new Set((items as any[]).map((i) => i.id));
+              let added = false;
+              for (const alt of altItems) {
+                if ((alt as any)?.id && !existingIds.has((alt as any).id)) {
+                  (items as any[]).push(alt);
+                  added = true;
+                }
+              }
+              if (added) {
+                localStorage.setItem(normalizedKey, JSON.stringify(items));
+              }
+            }
+          } catch {}
+        }
+      }
+
+      return items;
     } catch {
       console.warn(`Error parsing items for collection ${collectionKey}, returning empty array`);
       return [];
     }
   }
 
-  private setItems<T>(collectionKey: string, items: T[]): void {
+  public setItems<T>(collectionKey: string, items: T[]): void {
     this.ensureInitialized();
+    const normalizedKey = MockDatabase.normalizeKey(collectionKey);
     try {
-      localStorage.setItem(collectionKey, JSON.stringify(items));
-      eventBus.emit(`collection:${collectionKey}`, items);
-      eventBus.emit('change', { key: collectionKey, items });
+      localStorage.setItem(normalizedKey, JSON.stringify(items));
+      const unPrefixed = collectionKey.replace('thehub_', '');
+      if (unPrefixed !== normalizedKey) {
+        localStorage.setItem(unPrefixed, JSON.stringify(items));
+      }
+      eventBus.emit(`collection:${normalizedKey}`, items);
+      eventBus.emit(`collection:${unPrefixed}`, items);
+      eventBus.emit('change', { key: normalizedKey, items });
     } catch (err) {
       console.error(`Error saving collection ${collectionKey} to localStorage:`, err);
     }
@@ -151,7 +244,11 @@ export class MockDatabase {
 
   async get<T extends { id: string }>(collectionKey: string, id: string): Promise<T | null> {
     const items = this.getItems<T>(collectionKey);
-    return items.find((item) => item.id === id) || null;
+    let item = items.find((it) => it.id === id);
+    if (!item && (collectionKey === 'users' || collectionKey === STORAGE_KEYS.USERS)) {
+      item = items.find((it: any) => it.username?.toLowerCase() === id.toLowerCase());
+    }
+    return item || null;
   }
 
   async list<T>(collectionKey: string, filterFn?: (item: T) => boolean): Promise<T[]> {
@@ -171,7 +268,8 @@ export class MockDatabase {
 
     if (db) {
       try {
-        const docRef = doc(db, collectionKey, id);
+        const normalizedKey = MockDatabase.normalizeKey(collectionKey);
+        const docRef = doc(db, normalizedKey, id);
         await setDoc(docRef, data, { merge: true });
       } catch (err) {
         console.warn(`[Firestore sync set] ${collectionKey}/${id}:`, err);
@@ -193,7 +291,8 @@ export class MockDatabase {
 
     if (db) {
       try {
-        const docRef = doc(db, collectionKey, id);
+        const normalizedKey = MockDatabase.normalizeKey(collectionKey);
+        const docRef = doc(db, normalizedKey, id);
         await setDoc(docRef, newItem);
       } catch (err) {
         console.warn(`[Firestore sync create] ${collectionKey}/${id}:`, err);
@@ -205,7 +304,10 @@ export class MockDatabase {
 
   async update<T extends { id: string }>(collectionKey: string, id: string, partial: Partial<T>): Promise<void> {
     const items = this.getItems<T>(collectionKey);
-    const index = items.findIndex((item) => item.id === id);
+    let index = items.findIndex((item) => item.id === id);
+    if (index < 0 && (collectionKey === 'users' || collectionKey === STORAGE_KEYS.USERS)) {
+      index = items.findIndex((item: any) => item.username?.toLowerCase() === id.toLowerCase());
+    }
     if (index >= 0) {
       items[index] = { ...items[index], ...partial };
       this.setItems(collectionKey, items);
@@ -213,7 +315,9 @@ export class MockDatabase {
 
     if (db) {
       try {
-        const docRef = doc(db, collectionKey, id);
+        const normalizedKey = MockDatabase.normalizeKey(collectionKey);
+        const targetId = index >= 0 ? items[index].id : id;
+        const docRef = doc(db, normalizedKey, targetId);
         await updateDoc(docRef, partial as Record<string, any>);
       } catch (err) {
         console.warn(`[Firestore sync update] ${collectionKey}/${id}:`, err);
