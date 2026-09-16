@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { Conversation, Message } from '@/types/message';
 import { mockDb, STORAGE_KEYS } from '@/lib/firebase/mock/mockDb';
+import { dbService } from '@/lib/firebase/db';
 import { useAuthStore } from './useAuthStore';
 import { usePeopleStore } from './usePeopleStore';
 import { api } from '@/lib/api';
@@ -106,7 +107,32 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       set({ conversations: convs, isLoading: false });
     } catch {
-      set({ isLoading: false });
+      try {
+        const localConvs = await dbService.list<Conversation>('conversations');
+        let convs = Array.isArray(localConvs) ? localConvs : [];
+        const hasGeneral = convs.some((c) => c.type === 'general' || c.id === 'conv_general');
+        if (!hasGeneral) {
+          convs.unshift({
+            id: 'conv_general',
+            type: 'general',
+            title: 'The Hub — General Community',
+            description: 'Public common space for all builders and members of The Hub to hang out, share ideas, and talk!',
+            participantIds: ['user_sidhu001'],
+            unreadCounts: {},
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: new Date().toISOString(),
+            lastMessage: {
+              senderId: 'user_sidhu001',
+              senderDisplayName: 'Sidhu',
+              content: 'Welcome everyone to The Hub! Feel free to introduce yourself, share what you are building, or ask any questions.',
+              createdAt: '2026-01-01T00:00:00.000Z',
+            },
+          });
+        }
+        set({ conversations: convs, isLoading: false });
+      } catch {
+        set({ isLoading: false });
+      }
     }
   },
 

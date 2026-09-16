@@ -7,6 +7,7 @@ import {
   ProjectExternalLink,
 } from '@/types/project';
 import { mockDb, STORAGE_KEYS } from '@/lib/firebase/mock/mockDb';
+import { dbService } from '@/lib/firebase/db';
 import { useAuthStore } from './useAuthStore';
 import { InAppNotification } from '@/types/notification';
 import { api } from '@/lib/api';
@@ -91,7 +92,16 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         isLoading: false,
       });
     } catch {
-      set({ isLoading: false });
+      try {
+        const localProjects = await dbService.list<Project>('projects');
+        set({
+          projects: localProjects,
+          userInterests: {},
+          isLoading: false,
+        });
+      } catch {
+        set({ isLoading: false });
+      }
     }
   },
 

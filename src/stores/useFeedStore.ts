@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { Post, Comment, Reaction, PostAttachment } from '@/types/post';
 import { mockDb, STORAGE_KEYS } from '@/lib/firebase/mock/mockDb';
+import { dbService } from '@/lib/firebase/db';
 import { useAuthStore } from './useAuthStore';
 import { InAppNotification } from '@/types/notification';
 import { api } from '@/lib/api';
@@ -51,8 +52,18 @@ export const useFeedStore = create<FeedState>((set, get) => ({
         reactions: data.reactions || [],
         isLoading: false,
       });
-    } catch (err) {
-      set({ isLoading: false });
+    } catch {
+      try {
+        const localPosts = await dbService.list<Post>('posts');
+        const localReactions = await dbService.list<Reaction>('reactions');
+        set({
+          posts: sortPostsWithPinned(localPosts),
+          reactions: localReactions,
+          isLoading: false,
+        });
+      } catch {
+        set({ isLoading: false });
+      }
     }
   },
 
@@ -67,7 +78,18 @@ export const useFeedStore = create<FeedState>((set, get) => ({
       }));
       return serverComments;
     } catch {
-      return get().comments[postId] || [];
+      try {
+        const allComments = await dbService.list<Comment>('comments', (c) => c.postId === postId);
+        set((state) => ({
+          comments: {
+            ...state.comments,
+            [postId]: allComments,
+          },
+        }));
+        return allComments;
+      } catch {
+        return get().comments[postId] || [];
+      }
     }
   },
 
@@ -87,9 +109,40 @@ export const useFeedStore = create<FeedState>((set, get) => ({
         isPosting: false,
       }));
       return created;
-    } catch (apiErr: any) {
-      set({ isPosting: false });
-      throw apiErr;
+    } catch {
+      const now = new Date().toISOString();
+      const newPost: Post = {
+        id: `post_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        authorId: user.id,
+        author: {
+          id: user.id,
+          username: user.username,
+          displayName: user.profile.displayName,
+          avatarUrl: user.profile.avatarUrl,
+          avatarInitials: user.profile.avatarInitials,
+          role: user.role,
+          isVerified: user.isVerified,
+        },
+        content: content.trim(),
+        attachment: attachment || undefined,
+        reactionCount: 0,
+        commentCount: 0,
+        isEdited: false,
+        isPinned: Boolean(isPinned && (user.role === 'moderator' || user.role === 'admin')),
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      await dbService.create<Post>('posts', newPost);
+      set((state) => ({
+        posts: [newPost, ...state.posts].sort((a, b) => {
+          if (a.isPinned && !b.isPinned) return -1;
+          if (!a.isPinned && b.isPinned) return 1;
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        }),
+        isPosting: false,
+      }));
+      return newPost;
     }
   },
 

@@ -86,6 +86,7 @@ export class MockDatabase {
     const sidhuUser = existingSidhu || {
       id: 'user_sidhu001',
       username: 'sidhu001',
+      passwordHash: 'a385751d4e446a8c4f6bdf6c8f89c41c2d4971cb11a8f6aa6b094a21fe9628de',
       role: 'moderator',
       isVerified: true,
       profile: {

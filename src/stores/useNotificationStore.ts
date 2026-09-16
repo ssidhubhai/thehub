@@ -35,7 +35,20 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
         isLoading: false,
       });
     } catch {
-      set({ isLoading: false });
+      try {
+        const user = useAuthStore.getState().user;
+        const localNotifs = await mockDb.list<InAppNotification>(
+          STORAGE_KEYS.NOTIFICATIONS,
+          user ? (n) => n.recipientId === user.id : undefined
+        );
+        set({
+          notifications: localNotifs,
+          unreadCount: localNotifs.filter((n) => !n.isRead).length,
+          isLoading: false,
+        });
+      } catch {
+        set({ isLoading: false });
+      }
     }
   },
 

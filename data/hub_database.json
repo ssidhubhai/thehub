@@ -1,6 +1,27 @@
 {
   "users": [
     {
+      "id": "user_1789553577094_sldu",
+      "username": "newtester99",
+      "passwordHash": "d5254ec6bb5f948a244c7cf683bdcf6fe843195868f79ea079935a694660e12b",
+      "profile": {
+        "displayName": "newtester99",
+        "bio": "",
+        "avatarInitials": "N",
+        "interests": [],
+        "currentlyLearning": "",
+        "currentlyBuilding": "",
+        "joinedAt": "2026-09-16T10:12:57.094Z",
+        "isOnboarded": false
+      },
+      "presence": {
+        "status": "online",
+        "lastActiveAt": "2026-09-16T10:13:01.244Z"
+      },
+      "createdAt": "2026-09-16T10:12:57.094Z",
+      "updatedAt": "2026-09-16T10:13:01.244Z"
+    },
+    {
       "id": "user_sidhu001",
       "username": "sidhu001",
       "passwordHash": "a385751d4e446a8c4f6bdf6c8f89c41c2d4971cb11a8f6aa6b094a21fe9628de",
@@ -27,10 +48,10 @@
       },
       "presence": {
         "status": "online",
-        "lastActiveAt": "2026-09-15T08:23:00.000Z"
+        "lastActiveAt": "2026-09-16T10:13:33.376Z"
       },
       "createdAt": "2026-01-01T00:00:00.000Z",
-      "updatedAt": "2026-09-15T08:23:00.000Z"
+      "updatedAt": "2026-09-16T10:13:33.376Z"
     }
   ],
   "posts": [],
@@ -48,7 +69,8 @@
       "title": "The Hub — General Community",
       "description": "Public common space for all builders and members of The Hub to hang out, share ideas, and talk!",
       "participantIds": [
-        "user_sidhu001"
+        "user_sidhu001",
+        "user_1789553577094_sldu"
       ],
       "unreadCounts": {},
       "createdAt": "2026-01-01T00:00:00.000Z",
@@ -79,5 +101,10 @@
     }
   ],
   "notifications": [],
-  "sessions": {}
+  "sessions": {
+    "0bae1bf32c39f257cc5a7e60605d2497f765151e5801e7afd4f8e249511405f3": "user_sidhu001",
+    "408a3c3e555bd98ba19e25a01c01597e10b957abaab2a8e2d00393a8b27fb6c6": "user_1789553577094_sldu",
+    "6710e6094031932b0db5566a1f64e13a7994d553c125d9297a51c1f6b59f000b": "user_1789553577094_sldu",
+    "8da7a5adf8ae513e829327095248fda81c7a8ff7aa99df991064956d2541fd5a": "user_sidhu001"
+  }
 }

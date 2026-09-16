@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { User } from '@/types/user';
 import { Connection } from '@/types/common';
 import { mockDb, STORAGE_KEYS } from '@/lib/firebase/mock/mockDb';
+import { dbService } from '@/lib/firebase/db';
 import { useAuthStore } from './useAuthStore';
 import { InAppNotification } from '@/types/notification';
 import { api } from '@/lib/api';
@@ -48,7 +49,12 @@ export const usePeopleStore = create<PeopleState>((set, get) => ({
       const serverUsers = await api.users.list();
       set({ people: serverUsers, isLoading: false });
     } catch {
-      set({ isLoading: false });
+      try {
+        const users = await dbService.list<User>('users');
+        set({ people: users, isLoading: false });
+      } catch {
+        set({ isLoading: false });
+      }
     }
   },
 
@@ -56,8 +62,15 @@ export const usePeopleStore = create<PeopleState>((set, get) => ({
     try {
       const serverConns = await api.connections.list();
       set({ connections: serverConns });
-    } catch (err) {
-      console.error('Error fetching connections:', err);
+    } catch {
+      try {
+        const user = useAuthStore.getState().user;
+        const allConns = await dbService.list<Connection>('connections');
+        const userConns = user ? allConns.filter((c) => c.senderId === user.id || c.recipientId === user.id) : allConns;
+        set({ connections: userConns });
+      } catch {
+        // ignore
+      }
     }
   },
 
