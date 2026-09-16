@@ -97,6 +97,9 @@ export const usePeopleStore = create<PeopleState>((set, get) => ({
 
     try {
       const created = await api.connections.request(targetUserId);
+      try {
+        await dbService.set<Connection>('connections', created.id, created);
+      } catch {}
       set((state) => ({
         connections: [...state.connections.filter((c) => c.id !== created.id), created],
       }));
@@ -105,7 +108,7 @@ export const usePeopleStore = create<PeopleState>((set, get) => ({
       if (apiErr.message?.includes('already exists') || apiErr.message?.includes('Cannot connect')) {
         throw apiErr;
       }
-      const created = await mockDb.connect(user.id, targetUserId);
+      const created = await dbService.connect(user.id, targetUserId);
       set((state) => ({
         connections: [...state.connections.filter((c) => c.id !== created.id), created],
       }));
@@ -120,13 +123,16 @@ export const usePeopleStore = create<PeopleState>((set, get) => ({
     try {
       await api.connections.accept(connectionId);
       const now = new Date().toISOString();
+      try {
+        await dbService.update<Connection>('connections', connectionId, { status: 'accepted', updatedAt: now });
+      } catch {}
       set((state) => ({
         connections: state.connections.map((c) =>
           c.id === connectionId ? { ...c, status: 'accepted', updatedAt: now } : c
         ),
       }));
     } catch (apiErr: any) {
-      const updated = await mockDb.acceptConnection(connectionId, user.id);
+      const updated = await dbService.acceptConnection(connectionId, user.id);
       set((state) => ({
         connections: state.connections.map((c) =>
           c.id === connectionId ? updated : c
@@ -138,8 +144,11 @@ export const usePeopleStore = create<PeopleState>((set, get) => ({
   declineConnection: async (connectionId: string) => {
     try {
       await api.connections.decline(connectionId);
+      try {
+        await dbService.delete('connections', connectionId);
+      } catch {}
     } catch {
-      await mockDb.delete(STORAGE_KEYS.CONNECTIONS, connectionId);
+      await dbService.declineConnection(connectionId);
     }
     set((state) => ({
       connections: state.connections.filter((c) => c.id !== connectionId),

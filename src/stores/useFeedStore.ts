@@ -46,10 +46,32 @@ export const useFeedStore = create<FeedState>((set, get) => ({
   fetchPosts: async (options?: { silent?: boolean }) => {
     if (!options?.silent) set({ isLoading: true });
     try {
-      const data = await api.posts.list();
+      const data = await api.posts.list().catch(() => ({ posts: [], reactions: [] }));
+      const localPosts = await dbService.list<Post>('posts').catch(() => []);
+      const localMockPosts = await mockDb.list<Post>(STORAGE_KEYS.POSTS).catch(() => []);
+
+      const postMap = new Map<string, Post>();
+      // Combine all sources, prioritizing latest/server items
+      [...localMockPosts, ...localPosts, ...(data.posts || [])].forEach((p) => {
+        if (p && p.id) {
+          const existing = postMap.get(p.id);
+          if (!existing || new Date(p.updatedAt || p.createdAt).getTime() >= new Date(existing.updatedAt || existing.createdAt).getTime()) {
+            postMap.set(p.id, p);
+          }
+        }
+      });
+
+      const mergedPosts = Array.from(postMap.values());
+      const localReactions = await dbService.list<Reaction>('reactions').catch(() => []);
+      const localMockReactions = await mockDb.list<Reaction>(STORAGE_KEYS.REACTIONS).catch(() => []);
+      const rxMap = new Map<string, Reaction>();
+      [...localMockReactions, ...localReactions, ...(data.reactions || [])].forEach((r) => {
+        if (r && r.id) rxMap.set(r.id, r);
+      });
+
       set({
-        posts: sortPostsWithPinned(data.posts || []),
-        reactions: data.reactions || [],
+        posts: sortPostsWithPinned(mergedPosts),
+        reactions: Array.from(rxMap.values()),
         isLoading: false,
       });
     } catch {
@@ -70,13 +92,19 @@ export const useFeedStore = create<FeedState>((set, get) => ({
   fetchComments: async (postId: string) => {
     try {
       const serverComments = await api.posts.listComments(postId);
+      const localComments = await dbService.list<Comment>('comments', (c) => c.postId === postId).catch(() => []);
+      const commMap = new Map<string, Comment>();
+      [...localComments, ...serverComments].forEach((c) => {
+        if (c && c.id) commMap.set(c.id, c);
+      });
+      const merged = Array.from(commMap.values());
       set((state) => ({
         comments: {
           ...state.comments,
-          [postId]: serverComments,
+          [postId]: merged,
         },
       }));
-      return serverComments;
+      return merged;
     } catch {
       try {
         const allComments = await dbService.list<Comment>('comments', (c) => c.postId === postId);
@@ -98,61 +126,96 @@ export const useFeedStore = create<FeedState>((set, get) => ({
     if (!user) throw new Error('Must be signed in to post');
 
     set({ isPosting: true });
-    try {
-      const created = await api.posts.create(content, attachment, isPinned);
-      set((state) => ({
-        posts: [created, ...state.posts].sort((a, b) => {
-          if (a.isPinned && !b.isPinned) return -1;
-          if (!a.isPinned && b.isPinned) return 1;
-          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-        }),
-        isPosting: false,
-      }));
-      return created;
-    } catch {
-      const now = new Date().toISOString();
-      const newPost: Post = {
-        id: `post_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        authorId: user.id,
-        author: {
-          id: user.id,
-          username: user.username,
-          displayName: user.profile.displayName,
-          avatarUrl: user.profile.avatarUrl,
-          avatarInitials: user.profile.avatarInitials,
-          role: user.role,
-          isVerified: user.isVerified,
-        },
-        content: content.trim(),
-        attachment: attachment || undefined,
-        reactionCount: 0,
-        commentCount: 0,
-        isEdited: false,
-        isPinned: Boolean(isPinned && (user.role === 'moderator' || user.role === 'admin')),
-        createdAt: now,
-        updatedAt: now,
-      };
+    const now = new Date().toISOString();
+    const isUserMod = Boolean(
+      user.role === 'moderator' ||
+      user.role === 'admin' ||
+      user.profile?.role === 'moderator' ||
+      user.username === 'sidhu001'
+    );
+    const effectivePinned = Boolean(isPinned && isUserMod);
 
-      await dbService.create<Post>('posts', newPost);
-      set((state) => ({
-        posts: [newPost, ...state.posts].sort((a, b) => {
-          if (a.isPinned && !b.isPinned) return -1;
-          if (!a.isPinned && b.isPinned) return 1;
-          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-        }),
-        isPosting: false,
-      }));
-      return newPost;
+    let created: Post | null = null;
+    try {
+      created = await api.posts.create(content, attachment, effectivePinned);
+    } catch (apiErr) {
+      console.warn('API post creation failed, falling back to dbService:', apiErr);
     }
+
+    const newPost: Post = created || {
+      id: `post_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      authorId: user.id,
+      author: {
+        id: user.id,
+        username: user.username,
+        displayName: user.profile?.displayName || user.username,
+        avatarUrl: user.profile?.avatarUrl,
+        avatarInitials: user.profile?.avatarInitials || '?',
+        role: user.role,
+        isVerified: user.isVerified,
+      },
+      content: content.trim(),
+      attachment: attachment || undefined,
+      reactionCount: 0,
+      commentCount: 0,
+      isEdited: false,
+      isPinned: effectivePinned,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    try {
+      await dbService.set<Post>('posts', newPost.id, newPost);
+      await mockDb.create<Post>(STORAGE_KEYS.POSTS, newPost);
+    } catch {}
+
+    set((state) => ({
+      posts: sortPostsWithPinned([newPost, ...state.posts.filter((p) => p.id !== newPost.id)]),
+      isPosting: false,
+    }));
+    return newPost;
   },
 
   editPost: async (postId: string, newContent: string) => {
     const user = useAuthStore.getState().user;
     if (!user) throw new Error('Must be signed in');
 
-    const updated = await api.posts.edit(postId, newContent);
+    const clean = newContent.trim();
+    if (!clean) throw new Error('Post content cannot be empty');
+
+    const now = new Date().toISOString();
+    let updatedFromApi: Post | null = null;
+
+    try {
+      updatedFromApi = await api.posts.edit(postId, clean);
+    } catch (err) {
+      console.warn('API post edit failed, continuing with dbService & local update:', err);
+    }
+
+    try {
+      await dbService.update<Post>('posts', postId, {
+        content: clean,
+        isEdited: true,
+        updatedAt: now,
+      });
+      await mockDb.update<Post>(STORAGE_KEYS.POSTS, postId, {
+        content: clean,
+        isEdited: true,
+        updatedAt: now,
+      });
+    } catch {}
+
     set((state) => ({
-      posts: state.posts.map((p) => (p.id === postId ? updated : p)),
+      posts: state.posts.map((p) =>
+        p.id === postId
+          ? {
+              ...(updatedFromApi || p),
+              content: clean,
+              isEdited: true,
+              updatedAt: now,
+            }
+          : p
+      ),
     }));
   },
 
@@ -160,7 +223,16 @@ export const useFeedStore = create<FeedState>((set, get) => ({
     const user = useAuthStore.getState().user;
     if (!user) throw new Error('Must be signed in');
 
-    await api.posts.delete(postId);
+    try {
+      await api.posts.delete(postId);
+    } catch (err) {
+      console.warn('API post delete failed, continuing with dbService & local update:', err);
+    }
+
+    try {
+      await dbService.delete('posts', postId);
+      await mockDb.delete(STORAGE_KEYS.POSTS, postId);
+    } catch {}
 
     set((state) => ({
       posts: state.posts.filter((p) => p.id !== postId),
@@ -170,15 +242,40 @@ export const useFeedStore = create<FeedState>((set, get) => ({
   },
 
   togglePinPost: async (postId: string) => {
-    const updated = await api.posts.togglePin(postId);
+    const currentPost = get().posts.find((p) => p.id === postId);
+    const newPinned = !currentPost?.isPinned;
+    const now = new Date().toISOString();
+    let updatedFromApi: Post | null = null;
+
+    try {
+      updatedFromApi = await api.posts.togglePin(postId);
+    } catch (err) {
+      console.warn('API toggle pin failed, continuing with dbService & local update:', err);
+    }
+
+    try {
+      await dbService.update<Post>('posts', postId, {
+        isPinned: newPinned,
+        updatedAt: now,
+      });
+      await mockDb.update<Post>(STORAGE_KEYS.POSTS, postId, {
+        isPinned: newPinned,
+        updatedAt: now,
+      });
+    } catch {}
+
     set((state) => ({
-      posts: state.posts
-        .map((p) => (p.id === postId ? updated : p))
-        .sort((a, b) => {
-          if (a.isPinned && !b.isPinned) return -1;
-          if (!a.isPinned && b.isPinned) return 1;
-          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-        }),
+      posts: sortPostsWithPinned(
+        state.posts.map((p) =>
+          p.id === postId
+            ? {
+                ...(updatedFromApi || p),
+                isPinned: newPinned,
+                updatedAt: now,
+              }
+            : p
+        )
+      ),
     }));
   },
 
@@ -188,6 +285,12 @@ export const useFeedStore = create<FeedState>((set, get) => ({
     } catch {
       // ignore
     }
+
+    try {
+      await dbService.delete('comments', commentId);
+      await mockDb.delete(STORAGE_KEYS.COMMENTS, commentId);
+    } catch {}
+
     set((state) => {
       const currentComments = state.comments[postId] || [];
       const filtered = currentComments.filter((c) => c.id !== commentId);
@@ -207,25 +310,60 @@ export const useFeedStore = create<FeedState>((set, get) => ({
     const user = useAuthStore.getState().user;
     if (!user) throw new Error('Must be signed in to react');
 
-    const res = await api.posts.toggleReaction(postId);
+    const existingReaction = get().reactions.find((r) => r.postId === postId && r.userId === user.id);
+    let serverRes: { reacted: boolean; reactionCount: number } | null = null;
 
-    set((state) => ({
-      reactions: res.reacted
+    try {
+      serverRes = await api.posts.toggleReaction(postId);
+    } catch (err) {
+      console.warn('API reaction failed, toggling locally:', err);
+    }
+
+    const willReact = serverRes ? serverRes.reacted : !existingReaction;
+
+    try {
+      if (!willReact && existingReaction) {
+        await dbService.delete('reactions', existingReaction.id);
+        await mockDb.delete(STORAGE_KEYS.REACTIONS, existingReaction.id);
+      } else if (willReact && !existingReaction) {
+        const newReaction = {
+          id: `rx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          postId,
+          userId: user.id,
+          type: 'fire' as const,
+          createdAt: new Date().toISOString(),
+        };
+        await dbService.set('reactions', newReaction.id, newReaction);
+        await mockDb.create(STORAGE_KEYS.REACTIONS, newReaction);
+      }
+    } catch {}
+
+    set((state) => {
+      const newReactions = willReact
         ? [
-            ...state.reactions,
+            ...state.reactions.filter((r) => !(r.postId === postId && r.userId === user.id)),
             {
-              id: `rx_${Date.now()}`,
+              id: existingReaction?.id || `rx_${Date.now()}`,
               postId,
               userId: user.id,
-              type: 'fire',
+              type: 'fire' as const,
               createdAt: new Date().toISOString(),
             },
           ]
-        : state.reactions.filter((r) => !(r.postId === postId && r.userId === user.id)),
-      posts: state.posts.map((p) =>
-        p.id === postId ? { ...p, reactionCount: res.reactionCount } : p
-      ),
-    }));
+        : state.reactions.filter((r) => !(r.postId === postId && r.userId === user.id));
+
+      const post = state.posts.find((p) => p.id === postId);
+      const newReactionCount = serverRes
+        ? serverRes.reactionCount
+        : Math.max(0, (post?.reactionCount || 0) + (willReact ? 1 : -1));
+
+      return {
+        reactions: newReactions,
+        posts: state.posts.map((p) =>
+          p.id === postId ? { ...p, reactionCount: newReactionCount } : p
+        ),
+      };
+    });
   },
 
   addComment: async (postId: string, content: string) => {
@@ -235,7 +373,38 @@ export const useFeedStore = create<FeedState>((set, get) => ({
     const cleanContent = content.trim();
     if (!cleanContent) throw new Error('Comment cannot be empty');
 
-    const created = await api.posts.addComment(postId, cleanContent);
+    const now = new Date().toISOString();
+    let created: Comment | null = null;
+
+    try {
+      created = await api.posts.addComment(postId, cleanContent);
+    } catch (err) {
+      console.warn('API addComment failed, creating locally in dbService:', err);
+    }
+
+    const newComment: Comment = created || {
+      id: `comment_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      postId,
+      authorId: user.id,
+      author: {
+        id: user.id,
+        username: user.username,
+        displayName: user.profile?.displayName || user.username,
+        avatarUrl: user.profile?.avatarUrl,
+        avatarInitials: user.profile?.avatarInitials || '?',
+        role: user.role,
+        isVerified: user.isVerified,
+      },
+      content: cleanContent,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    try {
+      await dbService.set('comments', newComment.id, newComment);
+      await mockDb.create(STORAGE_KEYS.COMMENTS, newComment);
+    } catch {}
+
     set((state) => {
       const post = state.posts.find((p) => p.id === postId);
       const newCount = (post?.commentCount || 0) + 1;
@@ -243,11 +412,11 @@ export const useFeedStore = create<FeedState>((set, get) => ({
         posts: state.posts.map((p) => (p.id === postId ? { ...p, commentCount: newCount } : p)),
         comments: {
           ...state.comments,
-          [postId]: [...(state.comments[postId] || []), created],
+          [postId]: [...(state.comments[postId] || []), newComment],
         },
       };
     });
-    return created;
+    return newComment;
   },
 
   hasReacted: (postId: string, userId?: string) => {

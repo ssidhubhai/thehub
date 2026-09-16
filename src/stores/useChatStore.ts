@@ -149,13 +149,43 @@ export const useChatStore = create<ChatState>((set, get) => ({
   fetchMessages: async (conversationId: string, options?: { silent?: boolean }) => {
     try {
       const serverMessages = await api.conversations.listMessages(conversationId);
+      if (Array.isArray(serverMessages)) {
+        set((state) => ({
+          messages: {
+            ...state.messages,
+            [conversationId]: serverMessages,
+          },
+        }));
+        return serverMessages;
+      }
+    } catch (err) {
+      // Fallback to Firestore and local storage
+    }
+
+    try {
+      const allMsgs = await dbService.list<Message>('messages');
+      const convMsgs = allMsgs.filter((m) => m.conversationId === conversationId);
+      if (convMsgs.length > 0) {
+        set((state) => ({
+          messages: {
+            ...state.messages,
+            [conversationId]: convMsgs,
+          },
+        }));
+        return convMsgs;
+      }
+    } catch {}
+
+    try {
+      const allMsgs = await mockDb.list<Message>(STORAGE_KEYS.MESSAGES);
+      const convMsgs = allMsgs.filter((m) => m.conversationId === conversationId);
       set((state) => ({
         messages: {
           ...state.messages,
-          [conversationId]: serverMessages,
+          [conversationId]: convMsgs,
         },
       }));
-      return serverMessages;
+      return convMsgs;
     } catch {
       return get().messages[conversationId] || [];
     }
@@ -170,103 +200,84 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     set({ isSending: true });
 
+    let created: Message | null = null;
     try {
-      const created = await api.conversations.sendMessage(conversationId, cleanContent, quotedMessageId, imageUrl);
-      const now = new Date().toISOString();
-      set((state) => ({
+      created = await api.conversations.sendMessage(conversationId, cleanContent, quotedMessageId, imageUrl);
+    } catch (err) {
+      console.warn('[Chat] API sendMessage failed, using dbService fallback:', err);
+    }
+
+    const now = new Date().toISOString();
+    const message: Message = created || {
+      id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      conversationId,
+      senderId: user.id,
+      sender: {
+        id: user.id,
+        username: user.username,
+        displayName: user.profile.displayName,
+        avatarUrl: user.profile.avatarUrl,
+        avatarInitials: user.profile.avatarInitials,
+      },
+      content: cleanContent,
+      imageUrl,
+      quotedMessageId,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    // Save message to both dbService (Firestore) and mockDb
+    try {
+      await dbService.set<Message>('messages', message.id, message);
+    } catch {}
+    try {
+      await mockDb.create<Message>(STORAGE_KEYS.MESSAGES, message as any);
+    } catch {}
+
+    // Update lastMessage on conversation
+    const lastMsgUpdate = {
+      lastMessage: {
+        senderId: user.id,
+        senderDisplayName: user.profile.displayName,
+        content: cleanContent || (imageUrl ? 'Shared an image' : ''),
+        createdAt: now,
+      },
+      updatedAt: now,
+    };
+
+    try {
+      await dbService.update<Conversation>('conversations', conversationId, lastMsgUpdate);
+    } catch {}
+    try {
+      await mockDb.update<Conversation>(STORAGE_KEYS.CONVERSATIONS, conversationId, lastMsgUpdate);
+    } catch {}
+
+    set((state) => {
+      const existing = state.messages[conversationId] || [];
+      const updated = existing.some((m) => m.id === message.id)
+        ? existing.map((m) => (m.id === message.id ? message : m))
+        : [...existing, message];
+
+      return {
         messages: {
           ...state.messages,
-          [conversationId]: [...(state.messages[conversationId] || []), created],
+          [conversationId]: updated,
         },
         conversations: state.conversations.map((c) =>
-          c.id === conversationId
-            ? {
-                ...c,
-                lastMessage: {
-                  senderId: user.id,
-                  senderDisplayName: user.profile.displayName,
-                  content: cleanContent || 'Attached an image',
-                  createdAt: now,
-                },
-                updatedAt: now,
-              }
-            : c
+          c.id === conversationId ? { ...c, ...lastMsgUpdate } : c
         ),
         isSending: false,
-      }));
-
-      return created;
-    } catch {
-      const now = new Date().toISOString();
-      const newMessageData: Omit<Message, 'id'> = {
-        conversationId,
-        senderId: user.id,
-        sender: {
-          id: user.id,
-          username: user.username,
-          displayName: user.profile.displayName,
-          avatarUrl: user.profile.avatarUrl,
-          avatarInitials: user.profile.avatarInitials,
-        },
-        content: cleanContent,
-        imageUrl,
-        quotedMessageId,
-        createdAt: now,
-        updatedAt: now,
       };
+    });
 
-      try {
-        const created = await mockDb.create<Message>(
-          STORAGE_KEYS.MESSAGES,
-          newMessageData as any
-        );
-
-        // Update lastMessage on conversation
-        await mockDb.update<Conversation>(STORAGE_KEYS.CONVERSATIONS, conversationId, {
-          lastMessage: {
-            senderId: user.id,
-            senderDisplayName: user.profile.displayName,
-            content: cleanContent,
-            createdAt: now,
-          },
-          updatedAt: now,
-        });
-
-        set((state) => ({
-          messages: {
-            ...state.messages,
-            [conversationId]: [...(state.messages[conversationId] || []), created],
-          },
-          conversations: state.conversations.map((c) =>
-            c.id === conversationId
-              ? {
-                  ...c,
-                  lastMessage: {
-                    senderId: user.id,
-                    senderDisplayName: user.profile.displayName,
-                    content: cleanContent,
-                    createdAt: now,
-                  },
-                  updatedAt: now,
-                }
-              : c
-          ),
-          isSending: false,
-        }));
-
-        return created;
-      } catch (err) {
-        set({ isSending: false });
-        throw err;
-      }
-    }
+    return message;
   },
 
   startOrGetDirectChat: async (targetUserId: string) => {
     const user = useAuthStore.getState().user;
     if (!user) throw new Error('Must be signed in');
 
-    // Verification guard: hybrid connection must be accepted
+    // Verification guard: hybrid connection must be accepted (or either party is a moderator)
     const canMsg = usePeopleStore.getState().canMessage(targetUserId);
     if (!canMsg) {
       throw new Error('You must have an accepted connection before starting a direct chat');
@@ -274,54 +285,97 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     try {
       const conv = await api.conversations.createDirect(targetUserId);
-      set((state) => ({
-        conversations: state.conversations.some((c) => c.id === conv.id)
-          ? state.conversations
-          : [conv, ...state.conversations],
-        activeConversationId: conv.id,
-        activeTab: 'private',
-      }));
-      return conv;
+      if (conv && conv.id) {
+        try {
+          await dbService.set<Conversation>('conversations', conv.id, conv);
+        } catch {}
+        try {
+          await mockDb.create<Conversation>(STORAGE_KEYS.CONVERSATIONS, conv as any);
+        } catch {}
+
+        set((state) => ({
+          conversations: state.conversations.some((c) => c.id === conv.id)
+            ? state.conversations
+            : [conv, ...state.conversations],
+          activeConversationId: conv.id,
+          activeTab: 'private',
+        }));
+        return conv;
+      }
     } catch (apiErr: any) {
-      if (apiErr.message && !apiErr.message.includes('Failed to fetch')) {
-        throw apiErr;
-      }
+      console.warn('[Chat] api.conversations.createDirect fallback triggered:', apiErr?.message);
+    }
 
-      const { conversations } = get();
-      const existing = conversations.find(
-        (c) =>
-          c.type === 'direct' &&
-          c.participantIds.includes(user.id) &&
-          c.participantIds.includes(targetUserId)
-      );
+    // Direct search or creation fallback (Firestore + mockDb)
+    const { conversations } = get();
+    let existing = conversations.find(
+      (c) =>
+        c.type === 'direct' &&
+        c.participantIds.includes(user.id) &&
+        c.participantIds.includes(targetUserId)
+    );
 
-      if (existing) {
-        set({ activeConversationId: existing.id, activeTab: 'private' });
-        return existing;
-      }
+    if (!existing) {
+      try {
+        const firestoreConvs = await dbService.list<Conversation>('conversations');
+        existing = firestoreConvs.find(
+          (c) =>
+            c.type === 'direct' &&
+            c.participantIds.includes(user.id) &&
+            c.participantIds.includes(targetUserId)
+        );
+      } catch {}
+    }
 
-      const now = new Date().toISOString();
-      const newConv: Omit<Conversation, 'id'> = {
-        type: 'direct',
-        participantIds: [user.id, targetUserId],
-        unreadCounts: {},
-        createdAt: now,
-        updatedAt: now,
-      };
+    if (!existing) {
+      try {
+        const localConvs = await mockDb.list<Conversation>(STORAGE_KEYS.CONVERSATIONS);
+        existing = localConvs.find(
+          (c) =>
+            c.type === 'direct' &&
+            c.participantIds.includes(user.id) &&
+            c.participantIds.includes(targetUserId)
+        );
+      } catch {}
+    }
 
-      const created = await mockDb.create<Conversation>(
-        STORAGE_KEYS.CONVERSATIONS,
-        newConv as any
-      );
-
+    if (existing) {
       set((state) => ({
-        conversations: [created, ...state.conversations],
-        activeConversationId: created.id,
+        conversations: state.conversations.some((c) => c.id === existing!.id)
+          ? state.conversations
+          : [existing!, ...state.conversations],
+        activeConversationId: existing!.id,
         activeTab: 'private',
       }));
-
-      return created;
+      return existing;
     }
+
+    const now = new Date().toISOString();
+    const newConv: Conversation = {
+      id: `conv_dm_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      type: 'direct',
+      participantIds: [user.id, targetUserId],
+      unreadCounts: {},
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    try {
+      await dbService.set<Conversation>('conversations', newConv.id, newConv);
+    } catch (err) {
+      console.warn('[Chat] dbService.set fallback error:', err);
+    }
+    try {
+      await mockDb.create<Conversation>(STORAGE_KEYS.CONVERSATIONS, newConv as any);
+    } catch {}
+
+    set((state) => ({
+      conversations: [newConv, ...state.conversations.filter((c) => c.id !== newConv.id)],
+      activeConversationId: newConv.id,
+      activeTab: 'private',
+    }));
+
+    return newConv;
   },
 
   createGroupChat: async (title: string, participantIds: string[], description?: string) => {
@@ -331,41 +385,41 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const cleanTitle = title.trim();
     if (!cleanTitle) throw new Error('Group title is required');
 
+    let createdConv: Conversation | null = null;
     try {
-      const conv = await api.conversations.createGroup(cleanTitle, participantIds, description);
-      set((state) => ({
-        conversations: [conv, ...state.conversations],
-        activeConversationId: conv.id,
-        activeTab: 'groups',
-      }));
-      return conv;
-    } catch {
-      const allParticipants = Array.from(new Set([user.id, ...participantIds]));
-      const now = new Date().toISOString();
-
-      const newConv: Omit<Conversation, 'id'> = {
-        type: 'custom_group',
-        title: cleanTitle,
-        description,
-        participantIds: allParticipants,
-        unreadCounts: {},
-        createdAt: now,
-        updatedAt: now,
-      };
-
-      const created = await mockDb.create<Conversation>(
-        STORAGE_KEYS.CONVERSATIONS,
-        newConv as any
-      );
-
-      set((state) => ({
-        conversations: [created, ...state.conversations],
-        activeConversationId: created.id,
-        activeTab: 'groups',
-      }));
-
-      return created;
+      createdConv = await api.conversations.createGroup(cleanTitle, participantIds, description);
+    } catch (err) {
+      console.warn('[Chat] api.conversations.createGroup failed, falling back:', err);
     }
+
+    const allParticipants = Array.from(new Set([user.id, ...participantIds]));
+    const now = new Date().toISOString();
+
+    const newConv: Conversation = createdConv || {
+      id: `conv_grp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      type: 'custom_group',
+      title: cleanTitle,
+      description,
+      participantIds: allParticipants,
+      unreadCounts: {},
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    try {
+      await dbService.set<Conversation>('conversations', newConv.id, newConv);
+    } catch {}
+    try {
+      await mockDb.create<Conversation>(STORAGE_KEYS.CONVERSATIONS, newConv as any);
+    } catch {}
+
+    set((state) => ({
+      conversations: [newConv, ...state.conversations.filter((c) => c.id !== newConv.id)],
+      activeConversationId: newConv.id,
+      activeTab: 'groups',
+    }));
+
+    return newConv;
   },
 
   markAsRead: async (conversationId: string) => {
@@ -384,6 +438,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const currentUnreads = { ...conv.unreadCounts };
     if (currentUnreads[user.id]) {
       currentUnreads[user.id] = 0;
+      try {
+        await dbService.update<Conversation>('conversations', conversationId, { unreadCounts: currentUnreads });
+      } catch {}
       await mockDb.update<Conversation>(STORAGE_KEYS.CONVERSATIONS, conversationId, {
         unreadCounts: currentUnreads,
       });
@@ -411,11 +468,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
       }));
     } catch {
-      // Fallback for mock db
-      await mockDb.update<Message>(STORAGE_KEYS.MESSAGES, messageId, {
+      // Fallback for dbService and mock db
+      const updateData = {
         content: cleanContent,
         updatedAt: new Date().toISOString(),
-      });
+      };
+      try {
+        await dbService.update<Message>('messages', messageId, updateData);
+      } catch {}
+      await mockDb.update<Message>(STORAGE_KEYS.MESSAGES, messageId, updateData);
       set((state) => ({
         messages: {
           ...state.messages,
@@ -441,7 +502,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
       }));
     } catch {
-      // Fallback for mock db
+      // Fallback for dbService and mock db
+      try {
+        await dbService.delete('messages', messageId);
+      } catch {}
       await mockDb.delete(STORAGE_KEYS.MESSAGES, messageId);
       set((state) => ({
         messages: {
@@ -470,10 +534,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
       }));
     } catch {
-      await mockDb.update<Conversation>(STORAGE_KEYS.CONVERSATIONS, conversationId, {
+      const updateData = {
         pinnedMessageId: messageId,
         updatedAt: new Date().toISOString(),
-      });
+      };
+      try {
+        await dbService.update<Conversation>('conversations', conversationId, updateData);
+      } catch {}
+      await mockDb.update<Conversation>(STORAGE_KEYS.CONVERSATIONS, conversationId, updateData);
       set((state) => ({
         conversations: state.conversations.map((c) =>
           c.id === conversationId ? { ...c, pinnedMessageId: messageId } : c

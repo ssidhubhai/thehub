@@ -91,7 +91,9 @@ async function request<T>(
         // ignore
       }
     }
-    throw new Error(errorMsg);
+    const err = new Error(errorMsg) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
   }
 
   if (!isJson) {

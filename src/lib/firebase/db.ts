@@ -146,15 +146,41 @@ class UnifiedDbService implements DbService {
   }
 
   async connect(senderId: string, recipientId: string): Promise<Connection> {
-    return mockDb.connect(senderId, recipientId);
+    const conn = await mockDb.connect(senderId, recipientId);
+    if (db) {
+      try {
+        const docRef = doc(db, 'connections', conn.id);
+        await setDoc(docRef, conn);
+      } catch (err) {
+        console.warn('[Firestore connect] fallback:', err);
+      }
+    }
+    return conn;
   }
 
   async acceptConnection(connectionId: string, recipientId?: string): Promise<Connection> {
-    return mockDb.acceptConnection(connectionId, recipientId);
+    const conn = await mockDb.acceptConnection(connectionId, recipientId);
+    if (db) {
+      try {
+        const docRef = doc(db, 'connections', conn.id);
+        await setDoc(docRef, conn, { merge: true });
+      } catch (err) {
+        console.warn('[Firestore acceptConnection] fallback:', err);
+      }
+    }
+    return conn;
   }
 
   async declineConnection(connectionId: string, recipientId?: string): Promise<void> {
-    return mockDb.declineConnection(connectionId, recipientId);
+    await mockDb.declineConnection(connectionId, recipientId);
+    if (db) {
+      try {
+        const docRef = doc(db, 'connections', connectionId);
+        await deleteDoc(docRef);
+      } catch (err) {
+        console.warn('[Firestore declineConnection] fallback:', err);
+      }
+    }
   }
 
   async pitchProject(projectId: string, userId: string, message?: string): Promise<ProjectInterest> {

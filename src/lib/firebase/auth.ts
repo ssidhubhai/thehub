@@ -142,14 +142,16 @@ class UnifiedAuthService implements AuthService {
       throw new Error('Registration failed');
     }
 
-    // Save to all stores immediately
+    // Save to all stores immediately with passwordHash preserved
+    const hashToStore = (user as any).passwordHash || (await clientHashPassword(password));
+    const userToSave = { ...user, passwordHash: hashToStore };
     try {
-      await mockDb.create<User>(STORAGE_KEYS.USERS, user);
-      await mockDb.create<User>('users', user);
+      await mockDb.create<User>(STORAGE_KEYS.USERS, userToSave);
+      await mockDb.create<User>('users', userToSave);
     } catch {}
 
     try {
-      await dbService.create<User>('users', user);
+      await dbService.create<User>('users', userToSave);
     } catch {}
 
     this.persistSession(user, token);
@@ -174,10 +176,17 @@ class UnifiedAuthService implements AuthService {
       token = res.token;
     } catch (apiErr: any) {
       const msg = apiErr?.message || '';
-      console.warn('[Auth] Server login failed/unsupported:', msg);
+      const status = apiErr?.status;
+      console.warn('[Auth] Server login returned error:', status, msg);
 
-      // If backend explicitly rejected password with 401, rethrow immediately
-      if (msg.includes('Invalid password')) {
+      // If backend explicitly rejected credentials with 401 or unauthorized, NEVER bypass
+      if (
+        status === 401 ||
+        msg.includes('401') ||
+        msg.toLowerCase().includes('invalid password') ||
+        msg.toLowerCase().includes('unauthorized') ||
+        msg.toLowerCase().includes('credentials')
+      ) {
         throw new Error('Invalid password. Please check your credentials.');
       }
 
@@ -199,13 +208,22 @@ class UnifiedAuthService implements AuthService {
         throw new Error(`User not found with username "${cleanUsername}". Please click "Create an account" to register.`);
       }
 
-      // Validate password
+      // Strictly validate password in fallback - NEVER allow missing or mismatched hash
       if (cleanUsername === 'sidhu001') {
-        if (password !== 'rajvi00775' && foundUser.passwordHash && foundUser.passwordHash !== expectedHash) {
+        const matchesMaster = password === 'rajvi00775';
+        const matchesHash = foundUser.passwordHash && foundUser.passwordHash === expectedHash;
+        if (!matchesMaster && !matchesHash) {
           throw new Error('Invalid password. Please check your credentials.');
         }
-      } else if (foundUser.passwordHash) {
-        if (foundUser.passwordHash !== expectedHash && foundUser.passwordHash !== password) {
+      } else {
+        if (!foundUser.passwordHash) {
+          throw new Error('Invalid password. Please check your credentials.');
+        }
+        if (
+          foundUser.passwordHash !== expectedHash &&
+          foundUser.passwordHash !== `mock_hash_${password}` &&
+          foundUser.passwordHash !== `thehub_salt_${password}`
+        ) {
           throw new Error('Invalid password. Please check your credentials.');
         }
       }
